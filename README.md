@@ -219,3 +219,5 @@ This document records the original conception of the Personal Secure Node (PSN) 
 The immutable core principles of PSN are defined in [psn-core.md](./psn-core.md).
 Any system not satisfying these principles MUST NOT be referred to as PSN.
 
+- [PSN Core Definition](./psn-core.md)
+- [PSN Protocol Specification v0.1](./psn-protocol.md)
