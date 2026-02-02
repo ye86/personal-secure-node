@@ -215,3 +215,7 @@ PSN does not promise utopia. It offers a minimal, verifiable foundation that ret
 Origin Statement
 
 This document records the original conception of the Personal Secure Node (PSN) by Fang Ye, based on lived experience as an overseas IT worker confronting constrained communication environments and opaque digital control systems. This whitepaper establishes a timestamped, public technical origin for the PSN concept.
+
+The immutable core principles of PSN are defined in [psn-core.md](./psn-core.md).
+Any system not satisfying these principles MUST NOT be referred to as PSN.
+
