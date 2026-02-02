@@ -1,6 +1,6 @@
 # Personal Secure Node (PSN)
 A Human-Centric Internet Primitive
-Author: Fang Ye  
+Author: Fangfang Ye  
 First Public Release: 2026-02-02  
 
 This repository contains the original technical whitepaper and origin
