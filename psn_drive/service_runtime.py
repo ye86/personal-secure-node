@@ -21,6 +21,7 @@ from .sync_lock import SyncLock
 LOCK_FILE = "server.lock"
 STATE_FILE = "server.json"
 LOG_FILE = "server.log"
+EVENT_LOG_FILE = "service-events.jsonl"
 MAX_LOG_BYTES = 5 * 1024 * 1024
 DIAGNOSTIC_LOG_TAIL_BYTES = 512 * 1024
 
@@ -51,6 +52,40 @@ def service_state_path(vault) -> Path:
 
 def service_log_path(vault) -> Path:
     return logs_directory(vault) / LOG_FILE
+
+
+def service_event_log_path(vault) -> Path:
+    return logs_directory(vault) / EVENT_LOG_FILE
+
+
+def append_service_event(vault, event_type: str, **fields) -> dict:
+    path = service_event_log_path(vault)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    event = {
+        "at": utc_now(),
+        "event": event_type,
+        "version": __version__,
+        **fields,
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+    return event
+
+
+def list_service_events(vault, limit: int = 50) -> list[dict]:
+    if limit <= 0:
+        raise ValueError("event limit must be positive")
+    path = service_event_log_path(vault)
+    if not path.exists():
+        return []
+    lines = path.read_text(encoding="utf-8").splitlines()[-limit:]
+    events = []
+    for line in lines:
+        try:
+            events.append(json.loads(line))
+        except ValueError:
+            events.append({"event": "unreadable", "raw": line})
+    return events
 
 
 def process_is_running(pid: int | None) -> bool:
@@ -101,10 +136,12 @@ class ServiceLock:
             json.dumps(metadata, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        append_service_event(self.vault, "service.lock_acquired", pid=os.getpid())
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         service_state_path(self.vault).unlink(missing_ok=True)
+        append_service_event(self.vault, "service.lock_released", pid=os.getpid())
         return self._lock.__exit__(exc_type, exc_value, traceback)
 
 
@@ -125,9 +162,11 @@ def service_logging(vault):
         sys.stdout = handle
         sys.stderr = handle
         try:
+            append_service_event(vault, "service.starting", pid=os.getpid())
             print(json.dumps({"event": "service.starting", "at": utc_now(), "version": __version__}, ensure_ascii=False), flush=True)
             yield path
             print(json.dumps({"event": "service.stopped", "at": utc_now()}, ensure_ascii=False), flush=True)
+            append_service_event(vault, "service.stopped", pid=os.getpid())
         except Exception as exc:
             print(
                 json.dumps(
@@ -136,6 +175,7 @@ def service_logging(vault):
                 ),
                 flush=True,
             )
+            append_service_event(vault, "service.failed", error=exc.__class__.__name__, message=str(exc))
             raise
         finally:
             sys.stdout = old_stdout
@@ -146,6 +186,7 @@ def service_status(vault, config: ServerConfig | None = None) -> dict:
     lock_path = service_lock_path(vault)
     state_path = service_state_path(vault)
     log_path = service_log_path(vault)
+    event_log_path = service_event_log_path(vault)
     lock = None
     if state_path.exists():
         try:
@@ -169,6 +210,9 @@ def service_status(vault, config: ServerConfig | None = None) -> dict:
         "log_file": str(log_path),
         "log_exists": log_path.exists(),
         "log_bytes": log_path.stat().st_size if log_path.exists() else 0,
+        "event_log_file": str(event_log_path),
+        "event_log_exists": event_log_path.exists(),
+        "event_log_bytes": event_log_path.stat().st_size if event_log_path.exists() else 0,
         "storage": vault.status(),
     }
     if config is not None:
@@ -236,7 +280,9 @@ def service_preflight(vault, config: ServerConfig) -> dict:
     if not status["process_running"]:
         checks.append(_check_port_available(config.host, config.port))
     passed = all(item["ok"] for item in checks)
-    return {"ok": passed, "checks": checks, "status": status}
+    result = {"ok": passed, "checks": checks, "status": status}
+    append_service_event(vault, "service.preflight", ok=passed, failed_checks=[item["name"] for item in checks if not item["ok"]])
+    return result
 
 
 def cleanup_stale_service_state(vault) -> dict:
@@ -245,6 +291,7 @@ def cleanup_stale_service_state(vault) -> dict:
     if status["stale_state"]:
         service_state_path(vault).unlink(missing_ok=True)
         removed = True
+    append_service_event(vault, "service.cleanup_stale_state", removed=removed)
     return {"removed": removed, "state_file": str(service_state_path(vault))}
 
 
@@ -253,10 +300,14 @@ def stop_service(vault, timeout_seconds: int = 10, force: bool = False) -> dict:
     state = status.get("lock") or {}
     pid = state.get("pid") if isinstance(state, dict) else None
     if not isinstance(pid, int) or not status["state_exists"]:
-        return {"stopped": False, "reason": "not_running", "message": "service state file is missing"}
+        result = {"stopped": False, "reason": "not_running", "message": "service state file is missing"}
+        append_service_event(vault, "service.stop", **result)
+        return result
     if not process_is_running(pid):
         service_state_path(vault).unlink(missing_ok=True)
-        return {"stopped": False, "reason": "stale_state_removed", "pid": pid}
+        result = {"stopped": False, "reason": "stale_state_removed", "pid": pid}
+        append_service_event(vault, "service.stop", **result)
+        return result
     if pid == os.getpid():
         raise ValueError("refusing to stop the current process")
     try:
@@ -267,7 +318,9 @@ def stop_service(vault, timeout_seconds: int = 10, force: bool = False) -> dict:
     while time.monotonic() < deadline:
         if not process_is_running(pid):
             service_state_path(vault).unlink(missing_ok=True)
-            return {"stopped": True, "pid": pid, "forced": False}
+            result = {"stopped": True, "pid": pid, "forced": False}
+            append_service_event(vault, "service.stop", **result)
+            return result
         time.sleep(0.1)
     if force:
         if os.name == "nt":
@@ -278,9 +331,13 @@ def stop_service(vault, timeout_seconds: int = 10, force: bool = False) -> dict:
         while time.monotonic() < deadline:
             if not process_is_running(pid):
                 service_state_path(vault).unlink(missing_ok=True)
-                return {"stopped": True, "pid": pid, "forced": True}
+                result = {"stopped": True, "pid": pid, "forced": True}
+                append_service_event(vault, "service.stop", **result)
+                return result
             time.sleep(0.1)
-    return {"stopped": False, "reason": "timeout", "pid": pid}
+    result = {"stopped": False, "reason": "timeout", "pid": pid}
+    append_service_event(vault, "service.stop", **result)
+    return result
 
 
 def _sha256(path: Path) -> str:
@@ -353,6 +410,9 @@ def create_diagnostic_bundle(vault, config: ServerConfig | None = None, destinat
     log_path = service_log_path(vault)
     if log_path.exists():
         files["logs/server-tail.log"] = _tail_bytes(log_path)
+    event_log = service_event_log_path(vault)
+    if event_log.exists():
+        files["logs/service-events-tail.jsonl"] = _tail_bytes(event_log)
     readme = (
         "PSN Drive diagnostic bundle.\n"
         "This bundle intentionally excludes master keys, TLS private keys, encrypted blobs, device private keys, and tokens.\n"
@@ -367,13 +427,15 @@ def create_diagnostic_bundle(vault, config: ServerConfig | None = None, destinat
         os.replace(temporary, destination_path)
     finally:
         temporary.unlink(missing_ok=True)
-    return {
+    result = {
         "path": str(destination_path),
         "bytes": destination_path.stat().st_size,
         "sha256": _sha256(destination_path),
         "files": sorted(files),
         "contains_secrets": False,
     }
+    append_service_event(vault, "service.diagnostics_created", path=str(destination_path), bytes=result["bytes"])
+    return result
 
 
 def prepare_service_runtime(vault) -> dict:
@@ -386,4 +448,5 @@ def prepare_service_runtime(vault) -> dict:
         "lock_file": str(service_lock_path(vault)),
         "state_file": str(service_state_path(vault)),
         "log_file": str(service_log_path(vault)),
+        "event_log_file": str(service_event_log_path(vault)),
     }

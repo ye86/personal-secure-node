@@ -44,13 +44,16 @@ from psn_drive.server_config import (
 )
 from psn_drive.service_runtime import (
     ServiceLock,
+    append_service_event,
     cleanup_stale_service_state,
     create_diagnostic_bundle,
+    list_service_events,
     prepare_service_runtime,
     process_is_running,
     service_preflight,
     service_log_path,
     service_logging,
+    service_event_log_path,
     service_state_path,
     service_status,
     stop_service,
@@ -659,13 +662,17 @@ class VaultTests(unittest.TestCase):
                     pass
             locked = service_status(self.vault, config)
             self.assertTrue(locked["lock_exists"])
-            self.assertEqual(locked["lock"]["version"], "0.14.0")
+            self.assertEqual(locked["lock"]["version"], "0.15.0")
             self.assertTrue(locked["process_running"])
 
         with service_logging(self.vault):
             print("diagnostic log line")
         log_path = service_log_path(self.vault)
         self.assertIn("diagnostic log line", log_path.read_text(encoding="utf-8"))
+        append_service_event(self.vault, "service.test_event", detail="ok")
+        events = list_service_events(self.vault, 10)
+        self.assertTrue(any(item["event"] == "service.test_event" for item in events))
+        self.assertTrue(service_event_log_path(self.vault).is_file())
 
         bundle = create_diagnostic_bundle(self.vault, config)
         bundle_path = Path(bundle["path"])
@@ -676,6 +683,7 @@ class VaultTests(unittest.TestCase):
             self.assertIn("manifest.json", names)
             self.assertIn("service-status.json", names)
             self.assertIn("logs/server-tail.log", names)
+            self.assertIn("logs/service-events-tail.jsonl", names)
             self.assertNotIn(".psn/master.key", names)
             self.assertNotIn(".psn/tls.key", names)
             self.assertNotIn(".psn/blobs", names)

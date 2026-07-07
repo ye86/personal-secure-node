@@ -22,6 +22,7 @@ from .service_runtime import (
     ServiceLock,
     cleanup_stale_service_state,
     create_diagnostic_bundle,
+    list_service_events,
     prepare_service_runtime,
     service_preflight,
     service_logging,
@@ -253,6 +254,9 @@ def build_parser() -> argparse.ArgumentParser:
     diagnostics = subparsers.add_parser("server-diagnostics", help="create a redacted service diagnostic bundle")
     diagnostics.add_argument("--config", help="server config file; defaults to .psn/server.json")
     diagnostics.add_argument("--destination", help="output .zip file; defaults to .psn/diagnostics")
+
+    events = subparsers.add_parser("server-events", help="show recent structured service lifecycle events")
+    events.add_argument("--limit", type=int, default=50)
 
     service_scripts = subparsers.add_parser("windows-service-scripts", help="generate Windows service/task scripts")
     service_scripts.add_argument("--config", help="server config file; defaults to .psn/server.json")
@@ -524,6 +528,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "server-diagnostics":
             config_path = Path(args.config).expanduser().resolve() if args.config else default_config_path(vault)
             print_json(create_diagnostic_bundle(vault, load_server_config(config_path), args.destination))
+        elif args.command == "server-events":
+            print_json(list_service_events(vault, args.limit))
         elif args.command == "windows-service-scripts":
             config_path = Path(args.config).expanduser().resolve() if args.config else default_config_path(vault)
             output = args.output or (vault.control / "service" / "windows")

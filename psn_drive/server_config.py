@@ -219,6 +219,7 @@ def generate_windows_service_assets(
                 f"$Python = {powershell_quote(python_path)}",
                 f"$Config = {powershell_quote(str(config_path))}",
                 "& $Python -m psn_drive.cli server-diagnostics --config $Config",
+                "& $Python -m psn_drive.cli --vault " + powershell_quote(config.vault) + " server-events --limit 20",
                 "",
             ]
         ),

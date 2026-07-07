@@ -91,6 +91,7 @@ python drive.py --vault D:\MyPsnDrive server-health
 python drive.py --vault D:\MyPsnDrive server-status
 python drive.py --vault D:\MyPsnDrive server-preflight
 python drive.py --vault D:\MyPsnDrive server-diagnostics
+python drive.py --vault D:\MyPsnDrive server-events
 ```
 
 停止本机服务进程：

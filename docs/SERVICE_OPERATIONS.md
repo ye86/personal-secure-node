@@ -1,6 +1,6 @@
-# 服务日志、诊断包与服务生命周期（v0.13-v0.14）
+# 服务日志、诊断包与服务生命周期（v0.13-v0.15）
 
-v0.13补齐服务端长期运行所需的基础运维能力：单实例运行锁、服务日志、运行状态和脱敏诊断包。v0.14继续补充启动前预检、进程存活识别、陈旧状态清理和本机停止命令。
+v0.13补齐服务端长期运行所需的基础运维能力：单实例运行锁、服务日志、运行状态和脱敏诊断包。v0.14继续补充启动前预检、进程存活识别、陈旧状态清理和本机停止命令。v0.15新增结构化服务事件审计日志。
 
 ## 单实例运行锁
 
@@ -35,6 +35,21 @@ v0.13补齐服务端长期运行所需的基础运维能力：单实例运行锁
 ```
 
 日志达到约5 MiB后，下次启动会自动轮转为带时间戳的旧日志。
+
+结构化服务事件会写入：
+
+```text
+.psn/logs/service-events.jsonl
+```
+
+每行是一个JSON对象，记录服务启动、停止、失败、锁获取/释放、预检、停止请求、诊断包生成等生命周期事件。
+
+查看最近事件：
+
+```powershell
+python drive.py --vault D:\MyPsnDrive server-events
+python drive.py --vault D:\MyPsnDrive server-events --limit 20
+```
 
 调试时可以使用前台模式：
 
@@ -114,6 +129,7 @@ python drive.py --vault D:\MyPsnDrive server-diagnostics
 - `server-config-redacted.json`；
 - `metadata-summary.json`；
 - `logs/server-tail.log`；
+- `logs/service-events-tail.jsonl`；
 - `README.txt`。
 
 诊断包故意不包含：
@@ -147,5 +163,6 @@ PowerShell -ExecutionPolicy Bypass -File D:\MyPsnDrive\.psn\service\windows\coll
 - 没有崩溃报告上传；
 - 没有多实例跨用户可见性审计；
 - 日志中仍可能包含本地路径和错误上下文。
+- 服务事件日志是本地JSONL文件，尚未接入Windows事件日志或防篡改审计链。
 
-v0.14的目标不是一次性做成企业级服务管理，而是先把家庭服务器“可长期运行、可排错、不易误开两个实例、能被本机脚本安全停下”的底座打牢。
+v0.15的目标不是一次性做成企业级服务管理，而是先把家庭服务器“可长期运行、可排错、不易误开两个实例、能被本机脚本安全停下、关键生命周期可追踪”的底座打牢。
