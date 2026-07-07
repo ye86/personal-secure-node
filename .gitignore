@@ -1,0 +1,35 @@
+# Secrets and local identity material
+identity.key
+public.key
+*.pem
+*.p12
+*.pfx
+*.jwk
+*.secret
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+test-tmp/
+.tmp/
+tmp-test-permission/
+
+# PSN Drive local vault data
+.psn/
+
+# Local configuration and logs
+.env
+.env.*
+!.env.example
+*.log
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

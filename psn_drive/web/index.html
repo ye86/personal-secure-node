@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PSN Drive</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">PERSONAL STORAGE NODE</p>
+        <h1>PSN Drive</h1>
+        <p class="subtitle">你的文件，保存在你控制的节点。</p>
+      </div>
+      <span id="connection" class="status disconnected">未连接</span>
+    </header>
+
+    <section class="login" aria-labelledby="login-title">
+      <div>
+        <h2 id="login-title">短期访问</h2>
+        <p>使用 <code>device-login</code> 获取令牌。令牌只保留在当前页面内存中。</p>
+      </div>
+      <form id="login-form">
+        <label for="token">Bearer令牌</label>
+        <div class="token-row">
+          <input id="token" name="token" type="password" autocomplete="off" required>
+          <button type="submit">连接节点</button>
+        </div>
+        <p id="login-message" class="form-message" role="status"></p>
+      </form>
+    </section>
+
+    <section id="dashboard" hidden>
+      <div class="cards" aria-label="存储状态">
+        <article><span>文件</span><strong id="file-count">—</strong></article>
+        <article><span>物理占用</span><strong id="physical-size">—</strong></article>
+        <article><span>历史版本</span><strong id="version-count">—</strong></article>
+        <article><span>配额</span><strong id="quota-size">—</strong></article>
+      </div>
+
+      <section class="files" aria-labelledby="upload-title">
+        <div class="section-title">
+          <div><p class="eyebrow">RESUMABLE UPLOAD</p><h2 id="upload-title">上传文件</h2></div>
+        </div>
+        <form id="upload-form">
+          <div class="upload-grid">
+            <label>本地文件<input id="upload-file" type="file" required></label>
+            <label>Vault路径<input id="upload-path" type="text" placeholder="documents/example.pdf" required></label>
+            <button type="submit">开始上传</button>
+          </div>
+          <progress id="upload-progress" value="0" max="100"></progress>
+          <p id="upload-message" class="form-message" role="status"></p>
+        </form>
+      </section>
+
+      <section class="files" aria-labelledby="files-title">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">VAULT CONTENTS</p>
+            <h2 id="files-title">文件</h2>
+          </div>
+          <div><button id="up" type="button" class="secondary">上一级</button> <button id="trash" type="button" class="secondary">回收站</button> <button id="refresh" type="button" class="secondary">刷新</button></div>
+        </div>
+        <p id="current-path"><code>/</code></p>
+        <p id="message" role="status"></p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>路径</th><th>大小</th><th>更新时间</th><th></th></tr></thead>
+            <tbody id="file-list"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <dialog id="history-dialog">
+      <div class="dialog-title"><h2>历史版本</h2><button id="history-close" class="secondary" type="button">关闭</button></div>
+      <p id="history-path"></p>
+      <table><thead><tr><th>时间</th><th>大小</th><th>状态</th><th></th></tr></thead><tbody id="history-list"></tbody></table>
+    </dialog>
+
+    <dialog id="delete-dialog">
+      <div class="dialog-title"><h2 id="delete-title">删除文件</h2><button id="delete-close" class="secondary" type="button">关闭</button></div>
+      <p id="delete-description">此操作需要与当前文件路径绑定的一次性管理员动作令牌。</p>
+      <code id="delete-path"></code>
+      <label for="action-token">动作令牌</label>
+      <input id="action-token" type="password" autocomplete="off">
+      <button id="delete-confirm" class="danger" type="button">移入回收站</button>
+      <p id="delete-message" class="form-message" role="status"></p>
+    </dialog>
+
+    <dialog id="move-dialog">
+      <div class="dialog-title"><h2>移动或重命名</h2><button id="move-close" class="secondary" type="button">关闭</button></div>
+      <p id="move-source"></p><label for="move-destination">新Vault路径</label><input id="move-destination" type="text">
+      <button id="move-confirm" type="button">确认移动</button><p id="move-message" class="form-message" role="status"></p>
+    </dialog>
+
+    <dialog id="trash-dialog">
+      <div class="dialog-title"><h2>回收站</h2><button id="trash-close" class="secondary" type="button">关闭</button></div>
+      <table><thead><tr><th>路径</th><th>删除时间</th><th>大小</th><th></th></tr></thead><tbody id="trash-list"></tbody></table>
+    </dialog>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>
