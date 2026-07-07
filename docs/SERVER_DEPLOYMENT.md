@@ -89,7 +89,14 @@ python drive.py --vault D:\MyPsnDrive server-health
 
 ```powershell
 python drive.py --vault D:\MyPsnDrive server-status
+python drive.py --vault D:\MyPsnDrive server-preflight
 python drive.py --vault D:\MyPsnDrive server-diagnostics
+```
+
+停止本机服务进程：
+
+```powershell
+python drive.py --vault D:\MyPsnDrive server-stop
 ```
 
 详见 [服务日志、诊断包与运行锁](SERVICE_OPERATIONS.md)。

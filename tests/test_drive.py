@@ -1,7 +1,9 @@
 import os
+import sys
 import tempfile
 import base64
 import json
+import subprocess
 import threading
 import unittest
 import ssl
@@ -42,11 +44,16 @@ from psn_drive.server_config import (
 )
 from psn_drive.service_runtime import (
     ServiceLock,
+    cleanup_stale_service_state,
     create_diagnostic_bundle,
     prepare_service_runtime,
+    process_is_running,
+    service_preflight,
     service_log_path,
     service_logging,
+    service_state_path,
     service_status,
+    stop_service,
 )
 from psn_drive.vault import Vault, normalize_virtual_path
 
@@ -652,7 +659,8 @@ class VaultTests(unittest.TestCase):
                     pass
             locked = service_status(self.vault, config)
             self.assertTrue(locked["lock_exists"])
-            self.assertEqual(locked["lock"]["version"], "0.13.0")
+            self.assertEqual(locked["lock"]["version"], "0.14.0")
+            self.assertTrue(locked["process_running"])
 
         with service_logging(self.vault):
             print("diagnostic log line")
@@ -671,6 +679,45 @@ class VaultTests(unittest.TestCase):
             self.assertNotIn(".psn/master.key", names)
             self.assertNotIn(".psn/tls.key", names)
             self.assertNotIn(".psn/blobs", names)
+
+    def test_service_preflight_stale_state_cleanup_and_stop(self):
+        config_info = init_server_config(self.vault, service_name="PSNDriveLife")
+        config = load_server_config(config_info["config_file"])
+        preflight = service_preflight(self.vault, config)
+        self.assertTrue(preflight["ok"], preflight)
+
+        import socket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind((config.host, config.port))
+            blocked = service_preflight(self.vault, config)
+            port_check = next(item for item in blocked["checks"] if item["name"] == "port_available")
+            self.assertFalse(port_check["ok"])
+
+        state_path = service_state_path(self.vault)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps({"pid": 99999999, "version": "old"}), encoding="utf-8")
+        stale = service_status(self.vault, config)
+        self.assertTrue(stale["stale_state"])
+        cleaned = cleanup_stale_service_state(self.vault)
+        self.assertTrue(cleaned["removed"])
+        self.assertFalse(state_path.exists())
+
+        child = subprocess.Popen([
+            sys.executable,
+            "-c",
+            "import time; time.sleep(60)",
+        ])
+        try:
+            self.assertTrue(process_is_running(child.pid))
+            state_path.write_text(json.dumps({"pid": child.pid, "version": "test"}), encoding="utf-8")
+            stopped = stop_service(self.vault, timeout_seconds=5)
+            self.assertTrue(stopped["stopped"], stopped)
+            self.assertFalse(process_is_running(child.pid))
+        finally:
+            if child.poll() is None:
+                child.terminate()
+                child.wait(timeout=5)
 
     def test_windows_folder_sync_end_to_end(self):
         cert_path = self.vault.control / "tls.crt"

@@ -20,10 +20,13 @@ from .server_config import (
 )
 from .service_runtime import (
     ServiceLock,
+    cleanup_stale_service_state,
     create_diagnostic_bundle,
     prepare_service_runtime,
+    service_preflight,
     service_logging,
     service_status,
+    stop_service,
 )
 from .tls import certificate_fingerprint, create_tls_identity
 from .sync_client import SyncClient, SyncConfig
@@ -238,6 +241,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     server_status = subparsers.add_parser("server-status", help="show service runtime status")
     server_status.add_argument("--config", help="server config file; defaults to .psn/server.json")
+
+    server_preflight = subparsers.add_parser("server-preflight", help="check service config, TLS, paths and port before start")
+    server_preflight.add_argument("--config", help="server config file; defaults to .psn/server.json")
+
+    server_stop = subparsers.add_parser("server-stop", help="stop a local server-run process using the service state pid")
+    server_stop.add_argument("--timeout", type=int, default=10, help="seconds to wait for shutdown")
+    server_stop.add_argument("--force", action="store_true", help="try a stronger termination after timeout")
+    server_stop.add_argument("--cleanup-stale", action="store_true", help="remove stale state when no process is running")
 
     diagnostics = subparsers.add_parser("server-diagnostics", help="create a redacted service diagnostic bundle")
     diagnostics.add_argument("--config", help="server config file; defaults to .psn/server.json")
@@ -500,6 +511,16 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "server-status":
             config_path = Path(args.config).expanduser().resolve() if args.config else default_config_path(vault)
             print_json(service_status(vault, load_server_config(config_path)))
+        elif args.command == "server-preflight":
+            config_path = Path(args.config).expanduser().resolve() if args.config else default_config_path(vault)
+            result = service_preflight(vault, load_server_config(config_path))
+            print_json(result)
+            return 0 if result["ok"] else 1
+        elif args.command == "server-stop":
+            if args.cleanup_stale:
+                print_json(cleanup_stale_service_state(vault))
+            else:
+                print_json(stop_service(vault, args.timeout, args.force))
         elif args.command == "server-diagnostics":
             config_path = Path(args.config).expanduser().resolve() if args.config else default_config_path(vault)
             print_json(create_diagnostic_bundle(vault, load_server_config(config_path), args.destination))

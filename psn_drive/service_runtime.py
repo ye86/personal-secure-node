@@ -3,7 +3,10 @@ import hashlib
 import json
 import os
 import platform
+import signal
+import socket
 import sys
+import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +51,34 @@ def service_state_path(vault) -> Path:
 
 def service_log_path(vault) -> Path:
     return logs_directory(vault) / LOG_FILE
+
+
+def process_is_running(pid: int | None) -> bool:
+    if not pid or pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            if not ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return False
+            return exit_code.value == 259
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
 
 
 class ServiceLock:
@@ -121,6 +152,8 @@ def service_status(vault, config: ServerConfig | None = None) -> dict:
             lock = json.loads(state_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             lock = {"unreadable": True}
+    pid = lock.get("pid") if isinstance(lock, dict) else None
+    running = process_is_running(pid) if isinstance(pid, int) else False
     status = {
         "version": __version__,
         "vault": str(vault.root),
@@ -131,6 +164,8 @@ def service_status(vault, config: ServerConfig | None = None) -> dict:
         "state_file": str(state_path),
         "state_exists": state_path.exists(),
         "lock": lock,
+        "process_running": running,
+        "stale_state": bool(state_path.exists() and lock and not running),
         "log_file": str(log_path),
         "log_exists": log_path.exists(),
         "log_bytes": log_path.stat().st_size if log_path.exists() else 0,
@@ -146,6 +181,106 @@ def service_status(vault, config: ServerConfig | None = None) -> dict:
             "service_name": config.service_name,
         }
     return status
+
+
+def _check_port_available(host: str, port: int) -> dict:
+    with socket.socket(socket.AF_INET6 if ":" in host and host != "127.0.0.1" else socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError as exc:
+            return {"name": "port_available", "ok": False, "message": str(exc)}
+    return {"name": "port_available", "ok": True, "message": f"{host}:{port} is available"}
+
+
+def service_preflight(vault, config: ServerConfig) -> dict:
+    prepare_service_runtime(vault)
+    checks = []
+    config_error = None
+    try:
+        config.validate()
+    except Exception as exc:
+        config_error = str(exc)
+    checks.append({"name": "config_valid", "ok": config_error is None, "message": config_error or "server config is valid"})
+    checks.append({
+        "name": "vault_initialized",
+        "ok": vault.key_path.exists() and vault.database_path.exists(),
+        "message": "vault key and metadata database exist",
+    })
+    cert_path = vault.control / "tls.crt"
+    key_path = vault.control / "tls.key"
+    checks.append({
+        "name": "tls_identity",
+        "ok": cert_path.exists() and key_path.exists(),
+        "message": "TLS certificate and private key exist" if cert_path.exists() and key_path.exists() else "TLS identity is missing",
+    })
+    for directory_name, directory in (
+        ("run_directory_writable", run_directory(vault)),
+        ("logs_directory_writable", logs_directory(vault)),
+        ("diagnostics_directory_writable", diagnostics_directory(vault)),
+    ):
+        marker = directory / ".write-test"
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            marker.write_text("ok", encoding="utf-8")
+            marker.unlink(missing_ok=True)
+            checks.append({"name": directory_name, "ok": True, "message": str(directory)})
+        except OSError as exc:
+            checks.append({"name": directory_name, "ok": False, "message": str(exc)})
+    status = service_status(vault, config)
+    checks.append({
+        "name": "service_not_running",
+        "ok": not status["process_running"],
+        "message": "service appears stopped" if not status["process_running"] else f"service pid {status['lock'].get('pid')} is running",
+    })
+    if not status["process_running"]:
+        checks.append(_check_port_available(config.host, config.port))
+    passed = all(item["ok"] for item in checks)
+    return {"ok": passed, "checks": checks, "status": status}
+
+
+def cleanup_stale_service_state(vault) -> dict:
+    status = service_status(vault)
+    removed = False
+    if status["stale_state"]:
+        service_state_path(vault).unlink(missing_ok=True)
+        removed = True
+    return {"removed": removed, "state_file": str(service_state_path(vault))}
+
+
+def stop_service(vault, timeout_seconds: int = 10, force: bool = False) -> dict:
+    status = service_status(vault)
+    state = status.get("lock") or {}
+    pid = state.get("pid") if isinstance(state, dict) else None
+    if not isinstance(pid, int) or not status["state_exists"]:
+        return {"stopped": False, "reason": "not_running", "message": "service state file is missing"}
+    if not process_is_running(pid):
+        service_state_path(vault).unlink(missing_ok=True)
+        return {"stopped": False, "reason": "stale_state_removed", "pid": pid}
+    if pid == os.getpid():
+        raise ValueError("refusing to stop the current process")
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError as exc:
+        raise ValueError(f"failed to signal service process {pid}: {exc}") from exc
+    deadline = time.monotonic() + max(timeout_seconds, 0)
+    while time.monotonic() < deadline:
+        if not process_is_running(pid):
+            service_state_path(vault).unlink(missing_ok=True)
+            return {"stopped": True, "pid": pid, "forced": False}
+        time.sleep(0.1)
+    if force:
+        if os.name == "nt":
+            os.kill(pid, signal.SIGTERM)
+        else:
+            os.kill(pid, signal.SIGKILL)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if not process_is_running(pid):
+                service_state_path(vault).unlink(missing_ok=True)
+                return {"stopped": True, "pid": pid, "forced": True}
+            time.sleep(0.1)
+    return {"stopped": False, "reason": "timeout", "pid": pid}
 
 
 def _sha256(path: Path) -> str:
