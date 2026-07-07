@@ -8,6 +8,7 @@ import ssl
 import tarfile
 import shutil
 import uuid
+import zipfile
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -38,6 +39,14 @@ from psn_drive.server_config import (
     health_check,
     init_server_config,
     load_server_config,
+)
+from psn_drive.service_runtime import (
+    ServiceLock,
+    create_diagnostic_bundle,
+    prepare_service_runtime,
+    service_log_path,
+    service_logging,
+    service_status,
 )
 from psn_drive.vault import Vault, normalize_virtual_path
 
@@ -598,9 +607,10 @@ class VaultTests(unittest.TestCase):
         self.assertEqual(len(config.certificate_fingerprint), 64)
 
         assets = generate_windows_service_assets(config_file, self.root / "service-assets", "python.exe")
-        for key in ("runner", "install_task", "uninstall_task", "winsw_config"):
+        for key in ("runner", "diagnostics", "install_task", "uninstall_task", "winsw_config"):
             self.assertTrue(Path(assets[key]).is_file())
         self.assertIn("server-run --config", Path(assets["runner"]).read_text(encoding="utf-8"))
+        self.assertIn("server-diagnostics --config", Path(assets["diagnostics"]).read_text(encoding="utf-8"))
         self.assertIn("Register-ScheduledTask", Path(assets["install_task"]).read_text(encoding="utf-8"))
 
         cert_path = self.vault.control / "tls.crt"
@@ -626,6 +636,41 @@ class VaultTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+
+    def test_service_runtime_lock_logging_status_and_diagnostics(self):
+        config_info = init_server_config(self.vault, service_name="PSNDriveDiag")
+        config = load_server_config(config_info["config_file"])
+        runtime = prepare_service_runtime(self.vault)
+        self.assertTrue(Path(runtime["run_directory"]).is_dir())
+        self.assertTrue(Path(runtime["logs_directory"]).is_dir())
+
+        with ServiceLock(self.vault):
+            from psn_drive.errors import ServiceAlreadyRunning
+
+            with self.assertRaises(ServiceAlreadyRunning):
+                with ServiceLock(self.vault):
+                    pass
+            locked = service_status(self.vault, config)
+            self.assertTrue(locked["lock_exists"])
+            self.assertEqual(locked["lock"]["version"], "0.13.0")
+
+        with service_logging(self.vault):
+            print("diagnostic log line")
+        log_path = service_log_path(self.vault)
+        self.assertIn("diagnostic log line", log_path.read_text(encoding="utf-8"))
+
+        bundle = create_diagnostic_bundle(self.vault, config)
+        bundle_path = Path(bundle["path"])
+        self.assertTrue(bundle_path.is_file())
+        self.assertFalse(bundle["contains_secrets"])
+        with zipfile.ZipFile(bundle_path) as archive:
+            names = set(archive.namelist())
+            self.assertIn("manifest.json", names)
+            self.assertIn("service-status.json", names)
+            self.assertIn("logs/server-tail.log", names)
+            self.assertNotIn(".psn/master.key", names)
+            self.assertNotIn(".psn/tls.key", names)
+            self.assertNotIn(".psn/blobs", names)
 
     def test_windows_folder_sync_end_to_end(self):
         cert_path = self.vault.control / "tls.crt"

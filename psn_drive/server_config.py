@@ -165,6 +165,7 @@ def generate_windows_service_assets(
     service_name = config.service_name
 
     runner = output / "psn-drive-service-run.ps1"
+    diagnostics = output / "collect-diagnostics.ps1"
     install_task = output / "install-startup-task.ps1"
     uninstall_task = output / "uninstall-startup-task.ps1"
     winsw = output / "winsw-service.xml"
@@ -211,6 +212,18 @@ def generate_windows_service_assets(
         ),
         encoding="utf-8",
     )
+    diagnostics.write_text(
+        "\n".join(
+            [
+                "$ErrorActionPreference = 'Stop'",
+                f"$Python = {powershell_quote(python_path)}",
+                f"$Config = {powershell_quote(str(config_path))}",
+                "& $Python -m psn_drive.cli server-diagnostics --config $Config",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     winsw.write_text(
         "\n".join(
             [
@@ -232,6 +245,7 @@ def generate_windows_service_assets(
         "service_name": service_name,
         "output_dir": str(output),
         "runner": str(runner),
+        "diagnostics": str(diagnostics),
         "install_task": str(install_task),
         "uninstall_task": str(uninstall_task),
         "winsw_config": str(winsw),

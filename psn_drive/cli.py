@@ -18,6 +18,13 @@ from .server_config import (
     load_server_config,
     show_server_config,
 )
+from .service_runtime import (
+    ServiceLock,
+    create_diagnostic_bundle,
+    prepare_service_runtime,
+    service_logging,
+    service_status,
+)
 from .tls import certificate_fingerprint, create_tls_identity
 from .sync_client import SyncClient, SyncConfig
 from .vault import Vault
@@ -224,9 +231,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     server_run = subparsers.add_parser("server-run", help="run the HTTPS server from server.json")
     server_run.add_argument("--config", help="server config file; defaults to .psn/server.json")
+    server_run.add_argument("--foreground", action="store_true", help="keep logs on the console instead of .psn/logs/server.log")
 
     server_health = subparsers.add_parser("server-health", help="check server /v1/health with certificate pinning")
     server_health.add_argument("--config", help="server config file; defaults to .psn/server.json")
+
+    server_status = subparsers.add_parser("server-status", help="show service runtime status")
+    server_status.add_argument("--config", help="server config file; defaults to .psn/server.json")
+
+    diagnostics = subparsers.add_parser("server-diagnostics", help="create a redacted service diagnostic bundle")
+    diagnostics.add_argument("--config", help="server config file; defaults to .psn/server.json")
+    diagnostics.add_argument("--destination", help="output .zip file; defaults to .psn/diagnostics")
 
     service_scripts = subparsers.add_parser("windows-service-scripts", help="generate Windows service/task scripts")
     service_scripts.add_argument("--config", help="server config file; defaults to .psn/server.json")
@@ -321,9 +336,18 @@ def main(argv: list[str] | None = None) -> int:
                 config_path = default_config_path(vault_for_default)
             config = load_server_config(config_path)
             vault = Vault(config.vault)
-            print(f"PSN Drive API listening on {config.effective_url}", file=sys.stderr)
-            print(f"Certificate SHA-256: {config.certificate_fingerprint}", file=sys.stderr)
-            serve(vault, config.host, config.port, config.allow_lan)
+            runtime = prepare_service_runtime(vault)
+            with ServiceLock(vault):
+                if args.foreground:
+                    print(f"PSN Drive API listening on {config.effective_url}", file=sys.stderr)
+                    print(f"Certificate SHA-256: {config.certificate_fingerprint}", file=sys.stderr)
+                    print(f"Log file: {runtime['log_file']}", file=sys.stderr)
+                    serve(vault, config.host, config.port, config.allow_lan)
+                else:
+                    with service_logging(vault):
+                        print(f"PSN Drive API listening on {config.effective_url}", file=sys.stderr)
+                        print(f"Certificate SHA-256: {config.certificate_fingerprint}", file=sys.stderr)
+                        serve(vault, config.host, config.port, config.allow_lan)
             return 0
 
         vault = Vault(args.vault)
@@ -473,6 +497,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "server-health":
             config_path = Path(args.config).expanduser().resolve() if args.config else default_config_path(vault)
             print_json(health_check(load_server_config(config_path)))
+        elif args.command == "server-status":
+            config_path = Path(args.config).expanduser().resolve() if args.config else default_config_path(vault)
+            print_json(service_status(vault, load_server_config(config_path)))
+        elif args.command == "server-diagnostics":
+            config_path = Path(args.config).expanduser().resolve() if args.config else default_config_path(vault)
+            print_json(create_diagnostic_bundle(vault, load_server_config(config_path), args.destination))
         elif args.command == "windows-service-scripts":
             config_path = Path(args.config).expanduser().resolve() if args.config else default_config_path(vault)
             output = args.output or (vault.control / "service" / "windows")

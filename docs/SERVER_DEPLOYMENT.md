@@ -69,7 +69,13 @@ python drive.py --vault D:\MyPsnDrive server-run
 python drive.py server-run --config D:\MyPsnDrive\.psn\server.json
 ```
 
-`server-run` 会读取配置中的Vault路径、监听地址、端口和LAN开关，然后启动HTTPS API。它适合被任务计划、WinSW、NSSM或未来的正式安装器调用。
+`server-run` 会读取配置中的Vault路径、监听地址、端口和LAN开关，然后启动HTTPS API。v0.13开始它会持有 `.psn/run/server.lock`，并默认把输出写入 `.psn/logs/server.log`。它适合被任务计划、WinSW、NSSM或未来的正式安装器调用。
+
+调试时可使用：
+
+```powershell
+python drive.py --vault D:\MyPsnDrive server-run --foreground
+```
 
 ## 健康检查
 
@@ -78,6 +84,15 @@ python drive.py --vault D:\MyPsnDrive server-health
 ```
 
 健康检查会使用配置中的证书指纹访问 `/v1/health`。如果服务证书被替换或连接到错误节点，检查会失败。
+
+运行状态和诊断包：
+
+```powershell
+python drive.py --vault D:\MyPsnDrive server-status
+python drive.py --vault D:\MyPsnDrive server-diagnostics
+```
+
+详见 [服务日志、诊断包与运行锁](SERVICE_OPERATIONS.md)。
 
 ## 生成Windows托管脚本
 
@@ -94,6 +109,7 @@ D:\MyPsnDrive\.psn\service\windows\
 包含：
 
 - `psn-drive-service-run.ps1`：服务启动入口；
+- `collect-diagnostics.ps1`：生成脱敏诊断包；
 - `install-startup-task.ps1`：注册开机启动任务；
 - `uninstall-startup-task.ps1`：卸载开机启动任务；
 - `winsw-service.xml`：WinSW服务包装器配置模板。

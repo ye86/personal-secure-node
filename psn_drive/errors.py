@@ -68,3 +68,7 @@ class HTTPClientError(DriveError):
 
 class SyncAlreadyRunning(DriveError):
     pass
+
+
+class ServiceAlreadyRunning(DriveError):
+    pass
