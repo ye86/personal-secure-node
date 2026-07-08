@@ -18,6 +18,13 @@ from .errors import (
     RateLimitExceeded,
     UploadConflict,
 )
+from .server_config import default_config_path, load_server_config
+from .service_runtime import (
+    create_diagnostic_bundle,
+    list_service_events,
+    service_preflight,
+    service_status,
+)
 from .vault import DEFAULT_CHUNK_SIZE, Vault, normalize_virtual_path
 from .tls import certificate_fingerprint
 
@@ -115,6 +122,23 @@ class DriveRequestHandler(BaseHTTPRequestHandler):
     def _rate_limit(self, bucket: str, limit: int, window_seconds: int) -> None:
         self.server.rate_limiter.check((self.client_address[0], bucket), limit, window_seconds)
 
+    def _server_config_or_none(self):
+        path = default_config_path(self.server.vault)
+        if not path.exists():
+            return None
+        return load_server_config(path)
+
+    def _console_summary(self) -> dict:
+        config = self._server_config_or_none()
+        status = service_status(self.server.vault, config)
+        events = list_service_events(self.server.vault, 12)
+        return {
+            "status": status,
+            "events": events,
+            "config_exists": config is not None,
+            "diagnostics_directory": str(self.server.vault.control / "diagnostics"),
+        }
+
     def _handle_error(self, exc: Exception) -> None:
         if isinstance(exc, AuthenticationError):
             status = 401
@@ -159,6 +183,18 @@ class DriveRequestHandler(BaseHTTPRequestHandler):
             if path == "/v1/status":
                 self._authorize("drive:read")
                 self._json(200, self.server.vault.status())
+                return
+            if path == "/v1/console":
+                self._authorize("drive:read")
+                self._rate_limit("console", 60, 60)
+                self._json(200, self._console_summary())
+                return
+            if path == "/v1/console/events":
+                self._authorize("drive:read")
+                self._rate_limit("console", 60, 60)
+                query = parse_qs(parsed.query)
+                limit = int(query.get("limit", ["50"])[0])
+                self._json(200, list_service_events(self.server.vault, limit))
                 return
             if path == "/v1/files":
                 self._authorize("drive:read")
@@ -235,6 +271,19 @@ class DriveRequestHandler(BaseHTTPRequestHandler):
                     201,
                     self.server.auth.exchange_token(body["device_id"], body["challenge_id"], body["signature"]),
                 )
+                return
+            if path == "/v1/console/preflight":
+                self._authorize("drive:read")
+                self._rate_limit("console", 20, 60)
+                config = self._server_config_or_none()
+                if config is None:
+                    raise ValueError("server config is missing; run server-config-init first")
+                self._json(200, service_preflight(self.server.vault, config))
+                return
+            if path == "/v1/console/diagnostics":
+                self._authorize("drive:write")
+                self._rate_limit("console-diagnostics", 5, 60)
+                self._json(201, create_diagnostic_bundle(self.server.vault, self._server_config_or_none()))
                 return
             if path == "/v1/admin/challenges":
                 principal = self._authorize("drive:write")

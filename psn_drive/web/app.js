@@ -21,6 +21,14 @@ function formatBytes(value) {
   return `${size.toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
+function compactJson(value) {
+  if (!value || typeof value !== "object") return "";
+  const copy = {...value};
+  delete copy.at;
+  delete copy.event;
+  return Object.keys(copy).length ? JSON.stringify(copy) : "";
+}
+
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set("Authorization", `Bearer ${accessToken}`);
@@ -105,6 +113,67 @@ async function loadDashboard() {
     body.append(row);
   }
   byId("message").textContent = `当前层级：${listing.directories.length} 个目录，${files.length} 个文件`;
+  await loadConsole();
+}
+
+function renderEvents(events) {
+  const body = byId("event-list");
+  body.replaceChildren();
+  if (!events.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 3;
+    cell.textContent = "暂无服务事件";
+    row.append(cell);
+    body.append(row);
+    return;
+  }
+  for (const event of events) {
+    const row = document.createElement("tr");
+    const at = document.createElement("td");
+    at.textContent = event.at ? new Date(event.at).toLocaleString() : "—";
+    const name = document.createElement("td");
+    name.textContent = event.event || "unknown";
+    const detail = document.createElement("td");
+    detail.textContent = compactJson(event);
+    row.append(at, name, detail);
+    body.append(row);
+  }
+}
+
+function renderPreflight(result) {
+  const panel = byId("preflight-panel");
+  const list = byId("preflight-list");
+  list.replaceChildren();
+  for (const check of result.checks || []) {
+    const item = document.createElement("li");
+    item.className = check.ok ? "check-ok" : "check-failed";
+    item.textContent = `${check.ok ? "✓" : "✗"} ${check.name}: ${check.message}`;
+    list.append(item);
+  }
+  panel.hidden = false;
+}
+
+async function loadConsole() {
+  try {
+    const consoleData = await jsonApi("/v1/console");
+    const status = consoleData.status || {};
+    const storage = status.storage || {};
+    const server = status.server || {};
+    const lock = status.lock || {};
+    byId("service-state").textContent = status.process_running ? "运行中" : status.stale_state ? "状态陈旧" : "未运行";
+    byId("service-detail").textContent = lock.pid ? `PID ${lock.pid} · ${lock.started_at || "未知启动时间"}` : status.state_exists ? "存在状态文件" : "未发现运行状态";
+    byId("node-url").textContent = server.node_url || (consoleData.config_exists ? "配置未提供地址" : "未初始化服务配置");
+    byId("service-name").textContent = server.service_name || "—";
+    byId("log-size").textContent = status.log_exists ? formatBytes(status.log_bytes) : "无日志";
+    byId("event-log-size").textContent = status.event_log_exists ? `事件日志 ${formatBytes(status.event_log_bytes)}` : "无事件日志";
+    byId("logical-size").textContent = formatBytes(storage.logical_bytes);
+    byId("chunk-count").textContent = `${storage.chunks || 0} 个分块 · ${storage.deleted_files || 0} 个回收站文件`;
+    renderEvents(consoleData.events || []);
+    byId("console-message").textContent = `控制台已刷新：${new Date().toLocaleTimeString()}`;
+  } catch (error) {
+    byId("console-message").textContent = `控制台暂不可用：${error.message}`;
+  }
 }
 
 async function showHistory(path) {
@@ -222,6 +291,27 @@ byId("refresh").addEventListener("click", async () => {
     await loadDashboard();
   } catch (error) {
     byId("message").textContent = error.message;
+  }
+});
+byId("console-refresh").addEventListener("click", loadConsole);
+byId("console-preflight").addEventListener("click", async () => {
+  try {
+    const result = await jsonApi("/v1/console/preflight", "POST", {});
+    renderPreflight(result);
+    byId("console-message").textContent = result.ok ? "预检通过" : "预检发现问题";
+    await loadConsole();
+  } catch (error) {
+    byId("console-message").textContent = error.message;
+  }
+});
+byId("console-diagnostics").addEventListener("click", async () => {
+  try {
+    byId("console-message").textContent = "正在生成诊断包…";
+    const result = await jsonApi("/v1/console/diagnostics", "POST", {});
+    byId("console-message").textContent = `诊断包已生成：${result.path} (${formatBytes(result.bytes)})`;
+    await loadConsole();
+  } catch (error) {
+    byId("console-message").textContent = error.message;
   }
 });
 byId("up").addEventListener("click", async()=>{ currentPrefix=currentPrefix.includes("/")?currentPrefix.slice(0,currentPrefix.lastIndexOf("/")):""; await loadDashboard(); });

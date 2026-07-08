@@ -77,8 +77,13 @@ def create_disaster_backup(vault, destination: Path | str | None = None, label: 
     if destination_path.exists():
         raise FileExistsError(destination_path)
 
-    with tempfile.TemporaryDirectory(prefix="psn-disaster-backup-", dir=destination_path.parent) as temporary_directory:
-        temporary = Path(temporary_directory)
+    # Keep the final archive temporary file next to the destination for atomic replace,
+    # but create SQLite snapshot work files in a plain system temp directory. Some
+    # Windows environments reject SQLite databases created in tempfile.TemporaryDirectory
+    # directories or under hidden control directories such as ".psn\\disaster-backups".
+    temporary = Path(tempfile.gettempdir()) / f"psn-disaster-backup-{os.getpid()}-{utc_timestamp()}"
+    temporary.mkdir(parents=True, exist_ok=False)
+    try:
         metadata_snapshot = temporary / "metadata.sqlite3"
         source = sqlite3.connect(vault.database_path)
         snapshot = sqlite3.connect(metadata_snapshot)
@@ -126,6 +131,8 @@ def create_disaster_backup(vault, destination: Path | str | None = None, label: 
             os.replace(temporary_archive, destination_path)
         finally:
             temporary_archive.unlink(missing_ok=True)
+    finally:
+        shutil.rmtree(temporary, ignore_errors=True)
 
     sidecar = {
         "format": FORMAT,
@@ -219,8 +226,9 @@ def restore_disaster_backup(archive: Path | str, root: Path | str, force: bool =
         raise FileExistsError(f"target already contains a vault; use --force to keep a safety copy and replace it: {root_path}")
     root_path.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(prefix="psn-disaster-restore-", dir=root_path.parent) as temporary_directory:
-        temporary = Path(temporary_directory)
+    temporary = root_path.parent / f".psn-disaster-restore-{os.getpid()}-{utc_timestamp()}"
+    temporary.mkdir(parents=True, exist_ok=False)
+    try:
         manifest = _extract_and_verify(Path(archive), temporary)
         restored_control = temporary / ".psn"
         if control.exists():
@@ -234,6 +242,8 @@ def restore_disaster_backup(archive: Path | str, root: Path | str, force: bool =
             if safety is not None and not control.exists():
                 os.replace(safety, control)
             raise
+    finally:
+        shutil.rmtree(temporary, ignore_errors=True)
 
     return {
         "restored": True,

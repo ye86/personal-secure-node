@@ -23,6 +23,17 @@ button:hover { filter:brightness(1.08); }
 .cards article { padding:22px; border:1px solid #203b34; border-radius:16px; background:#0a1b17; }
 .cards span { display:block; color:#799c91; font-size:.8rem; }
 .cards strong { display:block; margin-top:9px; font-size:1.6rem; }
+.console-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:18px 0 24px; }
+.console-grid article { padding:18px; border:1px solid #27483f; border-radius:16px; background:#081612; min-width:0; }
+.console-grid span { display:block; color:#799c91; font-size:.78rem; }
+.console-grid strong { display:block; margin-top:8px; font-size:1rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.console-grid small { display:block; color:#7f9e94; margin-top:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.preflight-panel { margin:18px 0; padding:16px; border:1px solid #294940; border-radius:14px; background:#07130f; }
+.preflight-panel h3 { margin:0 0 10px; }
+.preflight-panel ul { margin:0; padding-left:20px; }
+.preflight-panel li { margin:8px 0; color:#bcd0c9; }
+.check-ok { color:#72f0bd !important; }
+.check-failed { color:#efb49e !important; }
 .table-wrap { overflow:auto; }
 table { width:100%; border-collapse:collapse; margin-top:16px; }
 th,td { padding:14px 10px; border-bottom:1px solid #1d342d; text-align:left; font-size:.9rem; }
@@ -38,4 +49,5 @@ dialog::backdrop { background:rgba(0,0,0,.72); backdrop-filter:blur(4px); }
 .danger-text { color:#f19a7e; }
 code { color:#9ff2cf; }
 .form-message { min-height:1.25rem; margin:10px 0 0; color:#efb49e; font-size:.85rem; }
-@media (max-width:760px) { .cards { grid-template-columns:repeat(2,1fr); } header,.token-row { align-items:stretch; flex-direction:column; } .status { align-self:flex-start; } .upload-grid { grid-template-columns:1fr; } }
+@media (max-width:900px) { .console-grid { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:760px) { .cards { grid-template-columns:repeat(2,1fr); } header,.token-row,.section-title { align-items:stretch; flex-direction:column; } .status { align-self:flex-start; } .upload-grid,.console-grid { grid-template-columns:1fr; } }

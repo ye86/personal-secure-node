@@ -40,6 +40,56 @@
         <article><span>配额</span><strong id="quota-size">—</strong></article>
       </div>
 
+      <section class="files" aria-labelledby="console-title">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">NODE CONSOLE</p>
+            <h2 id="console-title">管理控制台</h2>
+          </div>
+          <div>
+            <button id="console-refresh" type="button" class="secondary">刷新控制台</button>
+            <button id="console-preflight" type="button" class="secondary">启动预检</button>
+            <button id="console-diagnostics" type="button">生成诊断包</button>
+          </div>
+        </div>
+        <p id="console-message" role="status"></p>
+        <div class="console-grid">
+          <article>
+            <span>服务状态</span>
+            <strong id="service-state">—</strong>
+            <small id="service-detail">—</small>
+          </article>
+          <article>
+            <span>节点地址</span>
+            <strong id="node-url">—</strong>
+            <small id="service-name">—</small>
+          </article>
+          <article>
+            <span>日志</span>
+            <strong id="log-size">—</strong>
+            <small id="event-log-size">—</small>
+          </article>
+          <article>
+            <span>数据摘要</span>
+            <strong id="logical-size">—</strong>
+            <small id="chunk-count">—</small>
+          </article>
+        </div>
+        <div id="preflight-panel" class="preflight-panel" hidden>
+          <h3>预检结果</h3>
+          <ul id="preflight-list"></ul>
+        </div>
+        <div>
+          <h3>最近服务事件</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>时间</th><th>事件</th><th>详情</th></tr></thead>
+              <tbody id="event-list"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <section class="files" aria-labelledby="upload-title">
         <div class="section-title">
           <div><p class="eyebrow">RESUMABLE UPLOAD</p><h2 id="upload-title">上传文件</h2></div>

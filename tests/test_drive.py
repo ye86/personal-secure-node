@@ -64,7 +64,7 @@ from psn_drive.vault import Vault, normalize_virtual_path
 
 class VaultTests(unittest.TestCase):
     def setUp(self):
-        test_temp_root = Path.cwd() / "test-tmp"
+        test_temp_root = Path(tempfile.gettempdir()) / "psn-drive-tests"
         test_temp_root.mkdir(exist_ok=True)
         self.temporary = test_temp_root / f"psn-drive-test-{uuid.uuid4().hex}"
         self.temporary.mkdir()
@@ -590,6 +590,69 @@ class VaultTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    def test_http_management_console_status_preflight_and_diagnostics(self):
+        config_info = init_server_config(self.vault, service_name="PSNDriveConsole")
+        cert_path = self.vault.control / "tls.crt"
+        key_path = self.vault.control / "tls.key"
+        server = DriveHTTPServer(("127.0.0.1", 0), self.vault)
+        configure_tls(server, cert_path, key_path)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"https://127.0.0.1:{server.server_port}"
+        insecure_test_context = ssl.create_default_context()
+        insecure_test_context.check_hostname = False
+        insecure_test_context.verify_mode = ssl.CERT_NONE
+
+        def request_json(path, method="GET", value=None, token=None):
+            data = json.dumps(value).encode() if value is not None else None
+            headers = {"Content-Type": "application/json"} if data else {}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            request = Request(base_url + path, data=data, headers=headers, method=method)
+            with urlopen(request, timeout=5, context=insecure_test_context) as response:
+                return json.load(response)
+
+        try:
+            private_key, public_key = self.device_keypair()
+            pairing = server.auth.create_pairing()
+            device = request_json(
+                "/v1/pairings/claim",
+                "POST",
+                {"code": pairing["code"], "device_name": "Console device", "public_key": public_key},
+            )
+            challenge = request_json("/v1/auth/challenges", "POST", {"device_id": device["device_id"]})
+            signature = private_key.sign(challenge_message(challenge["challenge_id"], challenge["nonce"]))
+            token = request_json(
+                "/v1/auth/tokens",
+                "POST",
+                {
+                    "device_id": device["device_id"],
+                    "challenge_id": challenge["challenge_id"],
+                    "signature": base64.b64encode(signature).decode("ascii"),
+                },
+            )["access_token"]
+
+            append_service_event(self.vault, "service.console_test", detail="ok")
+            console = request_json("/v1/console", token=token)
+            self.assertTrue(console["config_exists"])
+            self.assertEqual(console["status"]["server"]["service_name"], "PSNDriveConsole")
+            self.assertTrue(any(item["event"] == "service.console_test" for item in console["events"]))
+
+            preflight = request_json("/v1/console/preflight", "POST", {}, token)
+            self.assertIn("checks", preflight)
+
+            diagnostics = request_json("/v1/console/diagnostics", "POST", {}, token)
+            self.assertFalse(diagnostics["contains_secrets"])
+            self.assertTrue(Path(diagnostics["path"]).is_file())
+            with zipfile.ZipFile(diagnostics["path"]) as archive:
+                self.assertIn("service-status.json", archive.namelist())
+                self.assertNotIn(".psn/master.key", archive.namelist())
+            self.assertEqual(Path(config_info["config_file"]), self.vault.control / "server.json")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
     def test_tls_identity_and_rate_limiter(self):
         cert_path = self.vault.control / "node.crt"
         key_path = self.vault.control / "node.key"
@@ -663,7 +726,7 @@ class VaultTests(unittest.TestCase):
                     pass
             locked = service_status(self.vault, config)
             self.assertTrue(locked["lock_exists"])
-            self.assertEqual(locked["lock"]["version"], "0.16.0")
+            self.assertEqual(locked["lock"]["version"], "0.17.0")
             self.assertTrue(locked["process_running"])
 
         with service_logging(self.vault):

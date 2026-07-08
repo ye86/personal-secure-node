@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "psn-drive"
-version = "0.16.0"
+version = "0.17.0"
 description = "A local-first, self-hosted personal data vault prototype"
 readme = "README.md"
 requires-python = ">=3.10"
