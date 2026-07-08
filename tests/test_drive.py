@@ -35,6 +35,7 @@ from psn_drive.device_client import pinned_request
 from psn_drive.errors import CertificatePinError
 from psn_drive.tls import certificate_fingerprint, create_tls_identity
 from psn_drive.sync_client import SyncClient, SyncConfig
+from psn_drive.sync_client import generate_windows_sync_assets
 from psn_drive.sync_lock import SyncLock
 from psn_drive.server_config import (
     generate_windows_service_assets,
@@ -662,7 +663,7 @@ class VaultTests(unittest.TestCase):
                     pass
             locked = service_status(self.vault, config)
             self.assertTrue(locked["lock_exists"])
-            self.assertEqual(locked["lock"]["version"], "0.15.0")
+            self.assertEqual(locked["lock"]["version"], "0.16.0")
             self.assertTrue(locked["process_running"])
 
         with service_logging(self.vault):
@@ -786,6 +787,37 @@ class VaultTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+
+    def test_windows_sync_background_scripts_are_generated(self):
+        sync_root = self.root / "sync-script-root"
+        sync_root.mkdir()
+        device_key = self.root / "sync-script-device.key"
+        device_key.write_text("placeholder", encoding="utf-8")
+        config = SyncConfig(
+            node_url="https://127.0.0.1:7780",
+            certificate_fingerprint="0" * 64,
+            device_id="device-for-scripts",
+            key_file=str(device_key),
+            local_root=str(sync_root),
+            remote_prefix="computers/scripts",
+        )
+        config_file = self.root / "sync-script.json"
+        config.save(config_file)
+        assets = generate_windows_sync_assets(
+            config_file,
+            self.root / "sync-assets",
+            "python.exe",
+            interval_seconds=120,
+            task_name="PSNDriveSyncTest",
+        )
+        for key in ("run_once", "watch", "status", "install_startup", "install_periodic", "uninstall"):
+            self.assertTrue(Path(assets[key]).is_file(), key)
+        self.assertIn("sync-watch", Path(assets["watch"]).read_text(encoding="utf-8"))
+        self.assertIn("--interval 120", Path(assets["watch"]).read_text(encoding="utf-8"))
+        self.assertIn("Register-ScheduledTask", Path(assets["install_startup"]).read_text(encoding="utf-8"))
+        self.assertIn("MultipleInstances IgnoreNew", Path(assets["install_startup"]).read_text(encoding="utf-8"))
+        self.assertIn("sync-status", Path(assets["status"]).read_text(encoding="utf-8"))
+        self.assertIn("Unregister-ScheduledTask", Path(assets["uninstall"]).read_text(encoding="utf-8"))
 
     def test_sync_lock_rejects_parallel_instance(self):
         lock_path = self.root / "sync-lock" / "sync.lock"

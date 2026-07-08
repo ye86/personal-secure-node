@@ -1,8 +1,8 @@
-# Windows文件夹同步客户端（v0.6）
+# Windows文件夹同步客户端（v0.6-v0.16）
 
 ## 定位
 
-v0.7提供可由Windows任务计划程序周期运行、或以周期模式持续运行的单向备份客户端：扫描指定本地目录，把新增或修改文件上传到PSN Drive节点。
+v0.7提供可由Windows任务计划程序周期运行、或以周期模式持续运行的单向备份客户端：扫描指定本地目录，把新增或修改文件上传到PSN Drive节点。v0.16新增Windows后台同步脚本生成器，用于把已有同步配置安装为任务计划后台任务。
 
 它目前不是双向同步盘，也不是常驻文件系统驱动。删除本地文件不会删除服务器副本，只会在本地状态库中标记为 `missing`。
 
@@ -68,9 +68,51 @@ python drive.py sync-watch D:\PsnDevice\pictures-sync.json --interval 300
 
 v0.7使用 `.psn-sync/sync.lock` 获取非阻塞操作系统文件锁。同一同步根目录已有任务运行时，第二个实例会立即失败。任务计划程序仍建议禁止并行实例，以减少无意义的启动和日志噪音。
 
+## v0.16后台同步脚本
+
+```powershell
+python drive.py windows-sync-scripts D:\PsnDevice\pictures-sync.json
+```
+
+默认输出到：
+
+```text
+<同步根目录>\.psn-sync\service\windows\
+```
+
+生成文件：
+
+- `sync-watch.ps1`：持续运行同步循环；
+- `sync-run-once.ps1`：执行一次同步；
+- `sync-status.ps1`：查看本地同步状态；
+- `install-startup-task.ps1`：注册登录后启动的后台同步任务；
+- `install-periodic-task.ps1`：注册周期性单次同步任务；
+- `uninstall-task.ps1`：卸载上述任务。
+
+推荐先使用登录后启动的持续同步任务：
+
+```powershell
+PowerShell -ExecutionPolicy Bypass -File <同步根目录>\.psn-sync\service\windows\install-startup-task.ps1
+```
+
+如果更希望减少常驻进程，可以使用周期任务：
+
+```powershell
+PowerShell -ExecutionPolicy Bypass -File <同步根目录>\.psn-sync\service\windows\install-periodic-task.ps1
+```
+
+卸载：
+
+```powershell
+PowerShell -ExecutionPolicy Bypass -File <同步根目录>\.psn-sync\service\windows\uninstall-task.ps1
+```
+
+当前脚本是功能性安装器原型，不是正式GUI安装包。它优先满足“能后台跑起来、能随用户登录启动、能查看状态、能卸载”的v1.0前功能闭环。
+
 ## 尚未实现
 
-- Windows系统服务和文件系统事件监听；
+- GUI安装器和系统托盘状态；
+- 文件系统事件监听；
 - 服务端到电脑的下载同步；
 - 冲突副本用户界面；
 - 删除传播和回收站策略；

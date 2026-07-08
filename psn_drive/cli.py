@@ -30,7 +30,7 @@ from .service_runtime import (
     stop_service,
 )
 from .tls import certificate_fingerprint, create_tls_identity
-from .sync_client import SyncClient, SyncConfig
+from .sync_client import SyncClient, SyncConfig, generate_windows_sync_assets
 from .vault import Vault
 
 
@@ -201,6 +201,13 @@ def build_parser() -> argparse.ArgumentParser:
     sync_watch_parser.add_argument("--interval", type=int, default=300, help="seconds between runs")
     sync_watch_parser.add_argument("--max-runs", type=int, default=0, help="stop after N runs; 0 means forever")
 
+    sync_scripts = subparsers.add_parser("windows-sync-scripts", help="generate Windows background sync task scripts")
+    sync_scripts.add_argument("config_file")
+    sync_scripts.add_argument("--output", help="output directory; defaults to <local-root>\\.psn-sync\\service\\windows")
+    sync_scripts.add_argument("--python", dest="python_executable", help="python.exe used by generated scripts")
+    sync_scripts.add_argument("--interval", type=int, default=300, help="seconds between sync runs")
+    sync_scripts.add_argument("--task-name", help="Windows scheduled task base name")
+
     directory_parser = subparsers.add_parser("directory-create", help="create an explicit empty directory")
     directory_parser.add_argument("virtual_path")
     batch_parser = subparsers.add_parser("batch-move", help="atomically move files from a JSON mapping list")
@@ -312,6 +319,18 @@ def main(argv: list[str] | None = None) -> int:
             config.save(args.config_file)
             print_json({"config_file": str(Path(args.config_file).resolve()), "created": True})
             return 0
+        if args.command == "windows-sync-scripts":
+            print_json(
+                generate_windows_sync_assets(
+                    args.config_file,
+                    args.output,
+                    args.python_executable,
+                    args.interval,
+                    args.task_name,
+                )
+            )
+            return 0
+
         if args.command in ("sync-run", "sync-status", "sync-watch"):
             client = SyncClient(SyncConfig.load(args.config_file))
             try:

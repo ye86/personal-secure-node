@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import sys
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -351,3 +352,131 @@ class SyncClient:
             "missing_local_files": counts.get("missing", 0),
             "latest_run": dict(latest) if latest else None,
         }
+
+
+def powershell_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def generate_windows_sync_assets(
+    config_file: Path | str,
+    output_dir: Path | str | None = None,
+    python_executable: str | None = None,
+    interval_seconds: int = 300,
+    task_name: str | None = None,
+) -> dict:
+    if interval_seconds < 60:
+        raise ValueError("sync task interval must be at least 60 seconds")
+    config_path = Path(config_file).expanduser().resolve()
+    config = SyncConfig.load(config_path)
+    root = Path(config.local_root).expanduser().resolve()
+    output = Path(output_dir).expanduser().resolve() if output_dir else root / STATE_DIRECTORY / "service" / "windows"
+    output.mkdir(parents=True, exist_ok=True)
+    python_path = python_executable or sys.executable
+    safe_task_name = task_name or f"PSNDriveSync-{hashlib.sha256(str(config_path).encode('utf-8')).hexdigest()[:8]}"
+
+    run_once = output / "sync-run-once.ps1"
+    watch = output / "sync-watch.ps1"
+    status = output / "sync-status.ps1"
+    install_startup = output / "install-startup-task.ps1"
+    install_periodic = output / "install-periodic-task.ps1"
+    uninstall = output / "uninstall-task.ps1"
+
+    run_once.write_text(
+        "\n".join(
+            [
+                "$ErrorActionPreference = 'Stop'",
+                f"$Python = {powershell_quote(python_path)}",
+                f"$Config = {powershell_quote(str(config_path))}",
+                "& $Python -m psn_drive.cli sync-run $Config",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    watch.write_text(
+        "\n".join(
+            [
+                "$ErrorActionPreference = 'Stop'",
+                f"$Python = {powershell_quote(python_path)}",
+                f"$Config = {powershell_quote(str(config_path))}",
+                f"& $Python -m psn_drive.cli sync-watch $Config --interval {interval_seconds}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    status.write_text(
+        "\n".join(
+            [
+                "$ErrorActionPreference = 'Stop'",
+                f"$Python = {powershell_quote(python_path)}",
+                f"$Config = {powershell_quote(str(config_path))}",
+                "& $Python -m psn_drive.cli sync-status $Config",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    install_startup.write_text(
+        "\n".join(
+            [
+                "$ErrorActionPreference = 'Stop'",
+                f"$TaskName = {powershell_quote(safe_task_name)}",
+                f"$Script = {powershell_quote(str(watch))}",
+                "$Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument \"-NoProfile -ExecutionPolicy Bypass -File `\"$Script`\"\"",
+                "$Trigger = New-ScheduledTaskTrigger -AtLogOn",
+                "$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DisallowStartIfOnBatteries:$false -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)",
+                "Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description 'PSN Drive folder sync background task' -Force",
+                "Start-ScheduledTask -TaskName $TaskName",
+                "Write-Host \"Installed and started sync task $TaskName\"",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    install_periodic.write_text(
+        "\n".join(
+            [
+                "$ErrorActionPreference = 'Stop'",
+                f"$TaskName = {powershell_quote(safe_task_name + '-Periodic')}",
+                f"$Script = {powershell_quote(str(run_once))}",
+                "$Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument \"-NoProfile -ExecutionPolicy Bypass -File `\"$Script`\"\"",
+                "$Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Seconds " + str(interval_seconds) + ")",
+                "$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DisallowStartIfOnBatteries:$false -MultipleInstances IgnoreNew",
+                "Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description 'PSN Drive periodic folder sync task' -Force",
+                "Start-ScheduledTask -TaskName $TaskName",
+                "Write-Host \"Installed and started periodic sync task $TaskName\"",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    uninstall.write_text(
+        "\n".join(
+            [
+                "$ErrorActionPreference = 'Stop'",
+                f"$TaskNames = @({powershell_quote(safe_task_name)}, {powershell_quote(safe_task_name + '-Periodic')})",
+                "foreach ($TaskName in $TaskNames) {",
+                "  Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue",
+                "  Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue",
+                "}",
+                "Write-Host \"Uninstalled PSN Drive sync tasks\"",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "task_name": safe_task_name,
+        "config_file": str(config_path),
+        "local_root": str(root),
+        "output_dir": str(output),
+        "interval_seconds": interval_seconds,
+        "run_once": str(run_once),
+        "watch": str(watch),
+        "status": str(status),
+        "install_startup": str(install_startup),
+        "install_periodic": str(install_periodic),
+        "uninstall": str(uninstall),
+    }
