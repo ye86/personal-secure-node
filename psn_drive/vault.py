@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import posixpath
 import secrets
@@ -27,6 +28,8 @@ from .storage import BlobStore
 DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024
 DEFAULT_SHARE_TTL_SECONDS = 7 * 24 * 60 * 60
 MAX_SHARE_TTL_SECONDS = 365 * 24 * 60 * 60
+ENTITY_TYPES = {"person", "organization", "user", "agent", "unknown"}
+ARTIFACT_KINDS = {"plugin", "skill", "app", "work"}
 
 
 def utc_now() -> str:
@@ -681,6 +684,242 @@ class Vault:
                 "content_hash": row["content_hash"],
             }
             return info, [dict(chunk) for chunk in chunks]
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _entity_from_manifest(value: dict | None, fallback_id: str, fallback_name: str) -> dict:
+        value = value or {}
+        entity_id = str(value.get("id") or fallback_id).strip()
+        name = str(value.get("name") or fallback_name).strip()
+        entity_type = str(value.get("type") or "unknown").strip()
+        parent_id = value.get("parent_id") or value.get("parent")
+        if not entity_id or not name:
+            raise ValueError("entity id and name are required")
+        if entity_type not in ENTITY_TYPES:
+            raise ValueError(f"unsupported entity type: {entity_type}")
+        return {
+            "id": entity_id,
+            "type": entity_type,
+            "name": name,
+            "parent_id": str(parent_id).strip() if parent_id else None,
+            "verified": bool(value.get("verified", False)),
+        }
+
+    @staticmethod
+    def _permission_from_manifest(value) -> dict:
+        if isinstance(value, str):
+            capability, separator, resource = value.partition(":")
+            return {
+                "capability": capability.strip(),
+                "resource": resource.strip() if separator else "*",
+                "description": None,
+            }
+        if not isinstance(value, dict):
+            raise ValueError("plugin permission must be a string or object")
+        return {
+            "capability": str(value.get("capability", "")).strip(),
+            "resource": str(value.get("resource", "*")).strip() or "*",
+            "description": value.get("description"),
+        }
+
+    @staticmethod
+    def _upsert_entity(conn: sqlite3.Connection, entity: dict, now: str) -> None:
+        conn.execute(
+            """
+            INSERT INTO entities(id, type, name, parent_id, verified, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                type = excluded.type,
+                name = excluded.name,
+                parent_id = excluded.parent_id,
+                verified = excluded.verified,
+                updated_at = excluded.updated_at
+            """,
+            (
+                entity["id"], entity["type"], entity["name"], entity["parent_id"],
+                1 if entity["verified"] else 0, now, now,
+            ),
+        )
+
+    def register_artifact_manifest(self, manifest: dict) -> dict:
+        if not isinstance(manifest, dict):
+            raise ValueError("artifact manifest must be an object")
+        artifact_id = str(manifest.get("id", "")).strip()
+        name = str(manifest.get("name", "")).strip()
+        kind = str(manifest.get("kind", "plugin")).strip()
+        version = str(manifest.get("version", "0.1.0")).strip()
+        entry = manifest.get("entry")
+        if not artifact_id or not name:
+            raise ValueError("artifact id and name are required")
+        if kind not in ARTIFACT_KINDS:
+            raise ValueError(f"unsupported artifact kind: {kind}")
+        publisher = self._entity_from_manifest(manifest.get("publisher"), f"entity.publisher.{artifact_id}", "Unknown Publisher")
+        author = self._entity_from_manifest(manifest.get("author"), publisher["id"], publisher["name"])
+        permissions = [self._permission_from_manifest(item) for item in manifest.get("permissions", [])]
+        for permission in permissions:
+            if not permission["capability"]:
+                raise ValueError("permission capability is required")
+        now = utc_now()
+        manifest_json = json.dumps(manifest, ensure_ascii=False, sort_keys=True)
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            self._upsert_entity(conn, publisher, now)
+            if author["id"] != publisher["id"]:
+                self._upsert_entity(conn, author, now)
+            row = conn.execute("SELECT status FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
+            status = row["status"] if row is not None else "disabled"
+            conn.execute(
+                """
+                INSERT INTO artifacts(id, kind, name, version, publisher_id, author_id, entry, status, manifest_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    kind = excluded.kind,
+                    name = excluded.name,
+                    version = excluded.version,
+                    publisher_id = excluded.publisher_id,
+                    author_id = excluded.author_id,
+                    entry = excluded.entry,
+                    manifest_json = excluded.manifest_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    artifact_id, kind, name, version, publisher["id"], author["id"],
+                    str(entry).strip() if entry else None, status, manifest_json, now, now,
+                ),
+            )
+            conn.execute("DELETE FROM artifact_permissions WHERE artifact_id = ?", (artifact_id,))
+            for permission in permissions:
+                conn.execute(
+                    """
+                    INSERT INTO artifact_permissions(artifact_id, capability, resource, description)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (artifact_id, permission["capability"], permission["resource"], permission["description"]),
+                )
+            conn.commit()
+            return self.get_artifact(artifact_id)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_artifact(self, artifact_id: str) -> dict:
+        items = self.list_artifacts()
+        for item in items:
+            if item["id"] == artifact_id:
+                return item
+        raise FileNotFoundInVault(f"artifact not found: {artifact_id}")
+
+    def list_artifacts(self) -> list[dict]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT a.*, p.name AS publisher_name, p.type AS publisher_type, p.parent_id AS publisher_parent_id,
+                       au.name AS author_name, au.type AS author_type,
+                       EXISTS(
+                         SELECT 1 FROM entity_sanctions s
+                         WHERE s.revoked_at IS NULL
+                           AND s.action = 'deny'
+                           AND (
+                             s.target_entity_id = a.publisher_id
+                             OR (s.scope IN ('children', 'all_children') AND s.target_entity_id = p.parent_id)
+                           )
+                       ) AS denied_by_sanction
+                FROM artifacts a
+                JOIN entities p ON p.id = a.publisher_id
+                LEFT JOIN entities au ON au.id = a.author_id
+                ORDER BY a.name COLLATE NOCASE
+                """
+            ).fetchall()
+            results = []
+            for row in rows:
+                artifact = dict(row)
+                permissions = conn.execute(
+                    "SELECT capability, resource, description FROM artifact_permissions WHERE artifact_id = ? ORDER BY capability, resource",
+                    (artifact["id"],),
+                ).fetchall()
+                sanctions = conn.execute(
+                    """
+                    SELECT s.id, s.target_entity_id, e.name AS target_name, s.scope, s.action, s.reason, s.created_at
+                    FROM entity_sanctions s JOIN entities e ON e.id = s.target_entity_id
+                    WHERE s.revoked_at IS NULL
+                      AND (s.target_entity_id = ? OR s.target_entity_id = ? OR s.target_entity_id = ?)
+                    ORDER BY s.created_at DESC
+                    """,
+                    (artifact["publisher_id"], artifact["author_id"], artifact["publisher_parent_id"]),
+                ).fetchall()
+                artifact["permissions"] = [dict(item) for item in permissions]
+                artifact["sanctions"] = [dict(item) for item in sanctions]
+                artifact["effective_status"] = "blocked" if artifact["denied_by_sanction"] else artifact["status"]
+                results.append(artifact)
+            return results
+        finally:
+            conn.close()
+
+    def set_artifact_status(self, artifact_id: str, enabled: bool) -> dict:
+        now = utc_now()
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                "UPDATE artifacts SET status = ?, updated_at = ? WHERE id = ?",
+                ("enabled" if enabled else "disabled", now, artifact_id),
+            )
+            if cursor.rowcount != 1:
+                raise FileNotFoundInVault(f"artifact not found: {artifact_id}")
+            conn.commit()
+            return self.get_artifact(artifact_id)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def sanction_entity(self, entity_id: str, scope: str = "all_children", action: str = "deny", reason: str | None = None) -> dict:
+        if scope not in ("self", "children", "all_children"):
+            raise ValueError("unsupported sanction scope")
+        if action not in ("deny", "require_confirmation"):
+            raise ValueError("unsupported sanction action")
+        now = utc_now()
+        sanction_id = uuid.uuid4().hex
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            entity = conn.execute("SELECT id FROM entities WHERE id = ?", (entity_id,)).fetchone()
+            if entity is None:
+                raise FileNotFoundInVault(f"entity not found: {entity_id}")
+            conn.execute(
+                """
+                INSERT INTO entity_sanctions(id, target_entity_id, scope, action, reason, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (sanction_id, entity_id, scope, action, reason, now),
+            )
+            conn.commit()
+            return {"id": sanction_id, "target_entity_id": entity_id, "scope": scope, "action": action, "reason": reason, "created_at": now}
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def revoke_sanction(self, sanction_id: str) -> dict:
+        now = utc_now()
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute("UPDATE entity_sanctions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", (now, sanction_id))
+            if cursor.rowcount != 1:
+                raise FileNotFoundInVault(f"sanction not found: {sanction_id}")
+            conn.commit()
+            return {"id": sanction_id, "revoked": True, "revoked_at": now}
         except Exception:
             conn.rollback()
             raise

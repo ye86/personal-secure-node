@@ -60,7 +60,7 @@
               <button id="quick-trash" type="button" class="secondary">打开回收站</button>
               <button id="quick-diagnostics" type="button" class="secondary">导出问题报告</button>
               <button id="quick-shares" type="button" class="secondary">分享链接</button>
-              <button type="button" class="secondary" disabled>插件中心</button>
+              <button id="quick-plugins" type="button" class="secondary">插件中心</button>
             </div>
             <p class="hint">插件中心先占位，后续版本逐步接入第三方模块生态。</p>
           </article>
@@ -68,6 +68,27 @@
             <h3>最近文件</h3>
             <ul id="recent-files" class="recent-list"></ul>
           </article>
+        </div>
+      </section>
+
+      <section class="files" aria-labelledby="plugins-title">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">PLUGIN TRUST</p>
+            <h2 id="plugins-title">插件中心</h2>
+            <p>先管理“谁发布了什么、声明要访问什么、用户是否信任它”。第三方代码执行和沙箱后续再接。</p>
+          </div>
+          <div>
+            <button id="plugin-register-open" type="button">注册插件清单</button>
+            <button id="plugins-refresh" type="button" class="secondary">刷新插件</button>
+          </div>
+        </div>
+        <p id="plugin-message" role="status"></p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>插件/作品</th><th>主体关系</th><th>权限声明</th><th>状态</th><th></th></tr></thead>
+            <tbody id="plugin-list"></tbody>
+          </table>
         </div>
       </section>
 
@@ -204,6 +225,14 @@
       <input id="share-url" type="text" readonly>
       <button id="share-copy" class="secondary" type="button">复制链接</button>
       <p id="share-dialog-message" class="form-message" role="status"></p>
+    </dialog>
+
+    <dialog id="plugin-dialog">
+      <div class="dialog-title"><h2>注册插件清单</h2><button id="plugin-close" class="secondary" type="button">关闭</button></div>
+      <p>v0.20只登记插件和权限声明，不执行第三方代码。publisher/author会用于统一信任管理。</p>
+      <textarea id="plugin-manifest" rows="16" spellcheck="false"></textarea>
+      <button id="plugin-register" type="button">注册</button>
+      <p id="plugin-dialog-message" class="form-message" role="status"></p>
     </dialog>
 
     <dialog id="trash-dialog">

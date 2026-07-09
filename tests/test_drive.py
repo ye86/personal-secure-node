@@ -293,6 +293,10 @@ class VaultTests(unittest.TestCase):
         import sqlite3
 
         connection = sqlite3.connect(self.vault.database_path)
+        connection.execute("DROP TABLE entity_sanctions")
+        connection.execute("DROP TABLE artifact_permissions")
+        connection.execute("DROP TABLE artifacts")
+        connection.execute("DROP TABLE entities")
         connection.execute("DROP TABLE share_links")
         connection.execute("DROP TABLE directories")
         connection.execute("DROP TABLE action_tokens")
@@ -313,7 +317,36 @@ class VaultTests(unittest.TestCase):
         connection = sqlite3.connect(self.vault.database_path)
         version = connection.execute("SELECT version FROM schema_info").fetchone()[0]
         connection.close()
-        self.assertEqual(version, 7)
+        self.assertEqual(version, 8)
+
+    def test_plugin_entity_permissions_and_sanctions(self):
+        manifest = {
+            "kind": "plugin",
+            "id": "plugin.netease.mail",
+            "name": "网易邮箱助手",
+            "version": "0.1.0",
+            "entry": "/plugins/netease/mail/",
+            "publisher": {"id": "entity.netease", "type": "organization", "name": "网易", "verified": True},
+            "author": {"id": "entity.netease.mail-team", "type": "organization", "name": "网易邮箱团队", "parent": "entity.netease"},
+            "permissions": [
+                {"capability": "files.read", "resource": "mail/*", "description": "读取邮件归档"},
+                "share.create:mail/*",
+            ],
+        }
+        plugin = self.vault.register_artifact_manifest(manifest)
+        self.assertEqual(plugin["status"], "disabled")
+        self.assertEqual(plugin["publisher_name"], "网易")
+        self.assertEqual(len(plugin["permissions"]), 2)
+
+        enabled = self.vault.set_artifact_status("plugin.netease.mail", True)
+        self.assertEqual(enabled["effective_status"], "enabled")
+        sanction = self.vault.sanction_entity("entity.netease", reason="test block")
+        blocked = self.vault.get_artifact("plugin.netease.mail")
+        self.assertEqual(blocked["effective_status"], "blocked")
+        self.assertTrue(blocked["sanctions"])
+        self.vault.revoke_sanction(sanction["id"])
+        restored = self.vault.get_artifact("plugin.netease.mail")
+        self.assertEqual(restored["effective_status"], "enabled")
 
     def test_share_links_expire_limit_and_revoke(self):
         source = self.make_file("share.txt", b"hello share")
@@ -526,6 +559,33 @@ class VaultTests(unittest.TestCase):
                 },
             )
             token = token_response["access_token"]
+            plugin = request_json(
+                "/v1/plugins/register", "POST",
+                {
+                    "manifest": {
+                        "kind": "plugin",
+                        "id": "plugin.example.viewer",
+                        "name": "Example Viewer",
+                        "version": "0.1.0",
+                        "entry": "/plugins/example/viewer/",
+                        "publisher": {"id": "entity.example", "type": "organization", "name": "Example Org"},
+                        "author": {"id": "entity.example.dev", "type": "person", "name": "Example Dev", "parent": "entity.example"},
+                        "permissions": ["files.read:documents/*"],
+                    }
+                },
+                token,
+            )
+            self.assertEqual(plugin["publisher_name"], "Example Org")
+            enabled_plugin = request_json("/v1/plugins/status", "POST", {"id": "plugin.example.viewer", "enabled": True}, token)
+            self.assertEqual(enabled_plugin["effective_status"], "enabled")
+            sanction = request_json(
+                "/v1/entities/sanctions", "POST",
+                {"entity_id": "entity.example", "scope": "all_children", "action": "deny", "reason": "test"},
+                token,
+            )
+            blocked_plugins = request_json("/v1/plugins", token=token)
+            self.assertEqual(blocked_plugins[0]["effective_status"], "blocked")
+            request_json("/v1/entities/sanctions/revoke", "POST", {"id": sanction["id"]}, token)
             session = request_json(
                 "/v1/uploads",
                 "POST",
@@ -769,7 +829,7 @@ class VaultTests(unittest.TestCase):
                     pass
             locked = service_status(self.vault, config)
             self.assertTrue(locked["lock_exists"])
-            self.assertEqual(locked["lock"]["version"], "0.19.0")
+            self.assertEqual(locked["lock"]["version"], "0.20.0")
             self.assertTrue(locked["process_running"])
 
         with service_logging(self.vault):

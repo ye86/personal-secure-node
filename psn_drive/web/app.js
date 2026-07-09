@@ -83,6 +83,7 @@ async function loadDashboard() {
   byId("backup-note").textContent = status.live_files > 0 ? "已保存文件，可继续接入手机/电脑同步" : "上传文件或配置同步客户端后会显示数据";
   renderRecentFiles(allFiles);
   await loadShares();
+  await loadPlugins();
   const body = byId("file-list");
   body.replaceChildren();
   byId("current-path").textContent = `/${listing.prefix}`;
@@ -184,6 +185,132 @@ function shareStateText(state) {
   if (state === "expired") return "已过期";
   if (state === "exhausted") return "次数已用完";
   return state || "未知";
+}
+
+async function loadPlugins() {
+  try {
+    const plugins = await jsonApi("/v1/plugins");
+    const body = byId("plugin-list");
+    body.replaceChildren();
+    if (!plugins.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 5;
+      cell.textContent = "还没有插件。可以先注册一个插件清单，建立主体和权限声明。";
+      row.append(cell);
+      body.append(row);
+      return;
+    }
+    for (const plugin of plugins) {
+      const row = document.createElement("tr");
+      const name = document.createElement("td");
+      name.innerHTML = "";
+      const title = document.createElement("strong");
+      title.textContent = plugin.name;
+      const meta = document.createElement("small");
+      meta.textContent = `${plugin.kind} · ${plugin.id} · v${plugin.version}`;
+      name.append(title, document.createElement("br"), meta);
+
+      const relation = document.createElement("td");
+      relation.textContent = `发布：${plugin.publisher_name} (${plugin.publisher_type})`;
+      const author = document.createElement("small");
+      author.textContent = `作者：${plugin.author_name || plugin.publisher_name}`;
+      relation.append(document.createElement("br"), author);
+
+      const permissions = document.createElement("td");
+      if (plugin.permissions.length) {
+        const list = document.createElement("ul");
+        list.className = "compact-list";
+        for (const permission of plugin.permissions) {
+          const item = document.createElement("li");
+          item.textContent = `${permission.capability}:${permission.resource}`;
+          list.append(item);
+        }
+        permissions.append(list);
+      } else {
+        permissions.textContent = "未声明权限";
+      }
+
+      const status = document.createElement("td");
+      status.textContent = plugin.effective_status === "blocked" ? "主体已封禁" : plugin.status === "enabled" ? "已启用" : "已禁用";
+      if (plugin.sanctions.length) {
+        const sanction = document.createElement("small");
+        sanction.textContent = `限制：${plugin.sanctions.map((item) => item.target_name).join("、")}`;
+        status.append(document.createElement("br"), sanction);
+      }
+
+      const actions = document.createElement("td");
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "link-button";
+      toggle.textContent = plugin.status === "enabled" ? "禁用" : "启用";
+      toggle.disabled = plugin.effective_status === "blocked" && plugin.status !== "enabled";
+      toggle.addEventListener("click", async () => {
+        await jsonApi("/v1/plugins/status", "POST", {id:plugin.id, enabled:plugin.status !== "enabled"});
+        byId("plugin-message").textContent = `${plugin.name} 状态已更新`;
+        await loadPlugins();
+      });
+      const sanctionButton = document.createElement("button");
+      sanctionButton.type = "button";
+      sanctionButton.className = "link-button danger-text";
+      sanctionButton.textContent = "封禁主体";
+      sanctionButton.addEventListener("click", async () => {
+        await jsonApi("/v1/entities/sanctions", "POST", {
+          entity_id:plugin.publisher_id,
+          scope:"all_children",
+          action:"deny",
+          reason:`user blocked publisher from plugin center: ${plugin.id}`,
+        });
+        byId("plugin-message").textContent = `已封禁 ${plugin.publisher_name} 及其子作品`;
+        await loadPlugins();
+      });
+      actions.append(toggle, sanctionButton);
+      for (const sanction of plugin.sanctions) {
+        const undo = document.createElement("button");
+        undo.type = "button";
+        undo.className = "link-button";
+        undo.textContent = "解除封禁";
+        undo.addEventListener("click", async () => {
+          await jsonApi("/v1/entities/sanctions/revoke", "POST", {id:sanction.id});
+          byId("plugin-message").textContent = `已解除 ${sanction.target_name} 的限制`;
+          await loadPlugins();
+        });
+        actions.append(undo);
+      }
+
+      row.append(name, relation, permissions, status, actions);
+      body.append(row);
+    }
+  } catch (error) {
+    byId("plugin-message").textContent = error.message;
+  }
+}
+
+function defaultPluginManifest() {
+  return JSON.stringify({
+    kind: "plugin",
+    id: "plugin.example.photos",
+    name: "照片整理示例",
+    version: "0.1.0",
+    entry: "/plugins/example/photos/",
+    publisher: {
+      id: "entity.example.studio",
+      type: "organization",
+      name: "Example Studio",
+      verified: false
+    },
+    author: {
+      id: "entity.example.alice",
+      type: "person",
+      name: "Alice",
+      parent: "entity.example.studio"
+    },
+    permissions: [
+      {"capability": "files.read", "resource": "photos/*", "description": "读取照片目录"},
+      {"capability": "files.write", "resource": "albums/*", "description": "写入相册目录"},
+      {"capability": "share.create", "resource": "albums/*", "description": "创建相册分享链接"}
+    ]
+  }, null, 2);
 }
 
 function renderRecentFiles(files) {
@@ -405,11 +532,18 @@ byId("quick-upload").addEventListener("click", () => scrollToSection("upload-tit
 byId("quick-files").addEventListener("click", () => scrollToSection("files-title"));
 byId("quick-trash").addEventListener("click", showTrash);
 byId("quick-shares").addEventListener("click", () => scrollToSection("shares-title"));
+byId("quick-plugins").addEventListener("click", () => scrollToSection("plugins-title"));
 byId("quick-diagnostics").addEventListener("click", async () => {
   byId("console-diagnostics").click();
   document.querySelector(".advanced").open = true;
 });
 byId("shares-refresh").addEventListener("click", loadShares);
+byId("plugins-refresh").addEventListener("click", loadPlugins);
+byId("plugin-register-open").addEventListener("click", () => {
+  byId("plugin-manifest").value = defaultPluginManifest();
+  byId("plugin-dialog-message").textContent = "";
+  byId("plugin-dialog").showModal();
+});
 byId("console-refresh").addEventListener("click", loadConsole);
 byId("console-preflight").addEventListener("click", async () => {
   try {
@@ -476,6 +610,7 @@ byId("history-close").addEventListener("click", () => byId("history-dialog").clo
 byId("delete-close").addEventListener("click", () => byId("delete-dialog").close());
 byId("move-close").addEventListener("click", () => byId("move-dialog").close());
 byId("share-close").addEventListener("click", () => byId("share-dialog").close());
+byId("plugin-close").addEventListener("click", () => byId("plugin-dialog").close());
 byId("trash-close").addEventListener("click", () => byId("trash-dialog").close());
 byId("move-confirm").addEventListener("click", async()=>{
   try { await jsonApi("/v1/files/move","POST",{source:selectedPath,destination:byId("move-destination").value.trim()}); byId("move-dialog").close(); await loadDashboard(); }
@@ -508,6 +643,16 @@ byId("share-copy").addEventListener("click", async () => {
     byId("share-url").select();
     document.execCommand("copy");
     byId("share-dialog-message").textContent = "链接已复制";
+  }
+});
+byId("plugin-register").addEventListener("click", async () => {
+  try {
+    const manifest = JSON.parse(byId("plugin-manifest").value);
+    const plugin = await jsonApi("/v1/plugins/register", "POST", {manifest});
+    byId("plugin-dialog-message").textContent = `已注册 ${plugin.name}`;
+    await loadPlugins();
+  } catch (error) {
+    byId("plugin-dialog-message").textContent = error.message;
   }
 });
 byId("delete-confirm").addEventListener("click", async () => {

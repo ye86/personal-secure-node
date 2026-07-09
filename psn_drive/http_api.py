@@ -215,6 +215,10 @@ class DriveRequestHandler(BaseHTTPRequestHandler):
                 include_inactive = query.get("include_inactive", ["false"])[0].lower() in ("1", "true", "yes")
                 self._json(200, self.server.vault.list_share_links(include_inactive))
                 return
+            if path == "/v1/plugins":
+                self._authorize("drive:read")
+                self._json(200, self.server.vault.list_artifacts())
+                return
             if path == "/v1/versions":
                 self._authorize("drive:read")
                 query = parse_qs(parsed.query)
@@ -327,6 +331,34 @@ class DriveRequestHandler(BaseHTTPRequestHandler):
                 self._authorize("drive:write")
                 body = self._read_json()
                 self._json(200, self.server.vault.revoke_share_link(body["id"]))
+                return
+            if path == "/v1/plugins/register":
+                self._authorize("drive:write")
+                body = self._read_json()
+                self._json(201, self.server.vault.register_artifact_manifest(body["manifest"]))
+                return
+            if path == "/v1/plugins/status":
+                self._authorize("drive:write")
+                body = self._read_json()
+                self._json(200, self.server.vault.set_artifact_status(body["id"], bool(body["enabled"])))
+                return
+            if path == "/v1/entities/sanctions":
+                self._authorize("drive:write")
+                body = self._read_json()
+                self._json(
+                    201,
+                    self.server.vault.sanction_entity(
+                        body["entity_id"],
+                        body.get("scope", "all_children"),
+                        body.get("action", "deny"),
+                        body.get("reason"),
+                    ),
+                )
+                return
+            if path == "/v1/entities/sanctions/revoke":
+                self._authorize("drive:write")
+                body = self._read_json()
+                self._json(200, self.server.vault.revoke_sanction(body["id"]))
                 return
             if path == "/v1/admin/challenges":
                 principal = self._authorize("drive:write")

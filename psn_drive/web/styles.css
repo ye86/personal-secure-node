@@ -15,7 +15,8 @@ p { color:#9db7ae; }
 form { margin-top:20px; }
 label { display:block; margin-bottom:8px; color:#bcd0c9; font-size:.85rem; }
 input { width:100%; border:1px solid #35564d; background:#07110f; color:#fff; border-radius:10px; padding:13px 14px; outline:none; }
-input:focus { border-color:#62e6b2; box-shadow:0 0 0 3px rgba(98,230,178,.14); }
+textarea { width:100%; border:1px solid #35564d; background:#07110f; color:#fff; border-radius:10px; padding:13px 14px; outline:none; font:13px ui-monospace,SFMono-Regular,Consolas,monospace; margin:12px 0; }
+input:focus,textarea:focus { border-color:#62e6b2; box-shadow:0 0 0 3px rgba(98,230,178,.14); }
 button { border:0; border-radius:10px; padding:13px 18px; background:#62e6b2; color:#062017; font-weight:750; cursor:pointer; white-space:nowrap; }
 button:hover { filter:brightness(1.08); }
 button:disabled { cursor:not-allowed; opacity:.48; filter:none; }
@@ -35,6 +36,8 @@ button:disabled { cursor:not-allowed; opacity:.48; filter:none; }
 .recent-list li { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:10px 0; border-bottom:1px solid #1d342d; }
 .recent-list li:last-child { border-bottom:0; }
 .recent-list small { color:#7f9e94; white-space:nowrap; }
+.compact-list { margin:0; padding-left:18px; color:#bcd0c9; }
+.compact-list li { margin:4px 0; }
 .advanced summary { display:flex; align-items:center; justify-content:space-between; gap:20px; cursor:pointer; list-style:none; }
 .advanced summary::-webkit-details-marker { display:none; }
 .advanced summary strong { display:block; margin-top:3px; font-size:1.15rem; }

@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -159,6 +159,48 @@ CREATE TABLE IF NOT EXISTS share_links (
     last_downloaded_at TEXT,
     revoked_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS entities (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL CHECK(type IN ('person', 'organization', 'user', 'agent', 'unknown')),
+    name TEXT NOT NULL,
+    parent_id TEXT REFERENCES entities(id),
+    verified INTEGER NOT NULL DEFAULT 0 CHECK(verified IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK(kind IN ('plugin', 'skill', 'app', 'work')),
+    name TEXT NOT NULL,
+    version TEXT NOT NULL,
+    publisher_id TEXT NOT NULL REFERENCES entities(id),
+    author_id TEXT REFERENCES entities(id),
+    entry TEXT,
+    status TEXT NOT NULL CHECK(status IN ('enabled', 'disabled')),
+    manifest_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS artifact_permissions (
+    artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+    capability TEXT NOT NULL,
+    resource TEXT NOT NULL DEFAULT '*',
+    description TEXT,
+    PRIMARY KEY(artifact_id, capability, resource)
+);
+
+CREATE TABLE IF NOT EXISTS entity_sanctions (
+    id TEXT PRIMARY KEY,
+    target_entity_id TEXT NOT NULL REFERENCES entities(id),
+    scope TEXT NOT NULL CHECK(scope IN ('self', 'children', 'all_children')),
+    action TEXT NOT NULL CHECK(action IN ('deny', 'require_confirmation')),
+    reason TEXT,
+    created_at TEXT NOT NULL,
+    revoked_at TEXT
+);
 """
 
 
@@ -181,7 +223,7 @@ def initialize(path: Path) -> None:
         row = conn.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
         if row is None:
             conn.execute("INSERT INTO schema_info(version) VALUES (?)", (SCHEMA_VERSION,))
-        elif row["version"] in (1, 2, 3, 4, 5, 6):
+        elif row["version"] in (1, 2, 3, 4, 5, 6, 7):
             conn.execute("UPDATE schema_info SET version = ?", (SCHEMA_VERSION,))
         elif row["version"] != SCHEMA_VERSION:
             raise RuntimeError(f"unsupported schema version: {row['version']}")
