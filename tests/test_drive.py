@@ -474,6 +474,9 @@ class VaultTests(unittest.TestCase):
             with urlopen(page_request, timeout=5, context=insecure_test_context) as response:
                 page = response.read().decode("utf-8")
                 self.assertIn("PSN Drive", page)
+                self.assertIn("个人数据中心", page)
+                self.assertIn("高级诊断", page)
+                self.assertIn("插件中心", page)
                 self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
                 self.assertEqual(response.headers["X-Frame-Options"], "DENY")
 
@@ -726,7 +729,7 @@ class VaultTests(unittest.TestCase):
                     pass
             locked = service_status(self.vault, config)
             self.assertTrue(locked["lock_exists"])
-            self.assertEqual(locked["lock"]["version"], "0.17.0")
+            self.assertEqual(locked["lock"]["version"], "0.18.0")
             self.assertTrue(locked["process_running"])
 
         with service_logging(self.vault):

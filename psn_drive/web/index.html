@@ -33,21 +33,56 @@
     </section>
 
     <section id="dashboard" hidden>
-      <div class="cards" aria-label="存储状态">
-        <article><span>文件</span><strong id="file-count">—</strong></article>
-        <article><span>物理占用</span><strong id="physical-size">—</strong></article>
-        <article><span>历史版本</span><strong id="version-count">—</strong></article>
-        <article><span>配额</span><strong id="quota-size">—</strong></article>
-      </div>
-
-      <section class="files" aria-labelledby="console-title">
+      <section class="home" aria-labelledby="home-title">
         <div class="section-title">
           <div>
-            <p class="eyebrow">NODE CONSOLE</p>
-            <h2 id="console-title">管理控制台</h2>
+            <p class="eyebrow">PERSONAL DATA CENTER</p>
+            <h2 id="home-title">个人数据中心</h2>
+            <p id="health-summary">正在读取你的节点状态…</p>
           </div>
           <div>
-            <button id="console-refresh" type="button" class="secondary">刷新控制台</button>
+            <button id="quick-upload" type="button">上传文件</button>
+            <button id="quick-files" type="button" class="secondary">查看文件</button>
+          </div>
+        </div>
+
+        <div class="cards" aria-label="数据状态">
+          <article><span>我的文件</span><strong id="file-count">—</strong><small id="file-note">已保存的文件</small></article>
+          <article><span>已用空间</span><strong id="physical-size">—</strong><small id="storage-note">正在计算空间</small></article>
+          <article><span>备份状态</span><strong id="backup-state">—</strong><small id="backup-note">等待同步客户端上报</small></article>
+          <article><span>回收站</span><strong id="trash-count">—</strong><small>可恢复误删文件</small></article>
+        </div>
+
+        <div class="home-grid">
+          <article>
+            <h3>常用操作</h3>
+            <div class="quick-actions">
+              <button id="quick-trash" type="button" class="secondary">打开回收站</button>
+              <button id="quick-diagnostics" type="button" class="secondary">导出问题报告</button>
+              <button type="button" class="secondary" disabled>分享链接</button>
+              <button type="button" class="secondary" disabled>插件中心</button>
+            </div>
+            <p class="hint">分享链接和插件中心先占位，后续版本逐步接入。</p>
+          </article>
+          <article>
+            <h3>最近文件</h3>
+            <ul id="recent-files" class="recent-list"></ul>
+          </article>
+        </div>
+      </section>
+
+      <details class="files advanced" aria-labelledby="console-title">
+        <summary>
+          <span><span class="eyebrow">ADVANCED</span><strong id="console-title">高级诊断</strong></span>
+          <small>给DIY用户和排查问题时使用</small>
+        </summary>
+        <div class="section-title advanced-title">
+          <div>
+            <h2>节点诊断</h2>
+            <p>这里显示偏技术的信息；日常使用一般不需要打开。</p>
+          </div>
+          <div>
+            <button id="console-refresh" type="button" class="secondary">刷新诊断</button>
             <button id="console-preflight" type="button" class="secondary">启动预检</button>
             <button id="console-diagnostics" type="button">生成诊断包</button>
           </div>
@@ -64,16 +99,8 @@
             <strong id="node-url">—</strong>
             <small id="service-name">—</small>
           </article>
-          <article>
-            <span>日志</span>
-            <strong id="log-size">—</strong>
-            <small id="event-log-size">—</small>
-          </article>
-          <article>
-            <span>数据摘要</span>
-            <strong id="logical-size">—</strong>
-            <small id="chunk-count">—</small>
-          </article>
+          <article><span>日志</span><strong id="log-size">—</strong><small id="event-log-size">—</small></article>
+          <article><span>数据摘要</span><strong id="logical-size">—</strong><small id="chunk-count">—</small></article>
         </div>
         <div id="preflight-panel" class="preflight-panel" hidden>
           <h3>预检结果</h3>
@@ -88,11 +115,11 @@
             </table>
           </div>
         </div>
-      </section>
+      </details>
 
       <section class="files" aria-labelledby="upload-title">
         <div class="section-title">
-          <div><p class="eyebrow">RESUMABLE UPLOAD</p><h2 id="upload-title">上传文件</h2></div>
+          <div><p class="eyebrow">ADD DATA</p><h2 id="upload-title">上传文件</h2></div>
         </div>
         <form id="upload-form">
           <div class="upload-grid">
@@ -108,8 +135,8 @@
       <section class="files" aria-labelledby="files-title">
         <div class="section-title">
           <div>
-            <p class="eyebrow">VAULT CONTENTS</p>
-            <h2 id="files-title">文件</h2>
+            <p class="eyebrow">MY FILES</p>
+            <h2 id="files-title">我的文件</h2>
           </div>
           <div><button id="up" type="button" class="secondary">上一级</button> <button id="trash" type="button" class="secondary">回收站</button> <button id="refresh" type="button" class="secondary">刷新</button></div>
         </div>

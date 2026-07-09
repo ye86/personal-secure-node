@@ -29,6 +29,10 @@ function compactJson(value) {
   return Object.keys(copy).length ? JSON.stringify(copy) : "";
 }
 
+function scrollToSection(id) {
+  byId(id).scrollIntoView({behavior: "smooth", block: "start"});
+}
+
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set("Authorization", `Bearer ${accessToken}`);
@@ -61,14 +65,23 @@ function uploadKey(file, path) {
 }
 
 async function loadDashboard() {
-  const [statusResponse, browseResponse] = await Promise.all([api("/v1/status"), api(`/v1/browse?prefix=${encodeURIComponent(currentPrefix)}`)]);
+  const [statusResponse, browseResponse, allFilesResponse] = await Promise.all([
+    api("/v1/status"),
+    api(`/v1/browse?prefix=${encodeURIComponent(currentPrefix)}`),
+    api("/v1/files"),
+  ]);
   const status = await statusResponse.json();
   const listing = await browseResponse.json();
+  const allFiles = await allFilesResponse.json();
   const files = listing.files;
   byId("file-count").textContent = String(status.live_files);
   byId("physical-size").textContent = formatBytes(status.physical_bytes);
-  byId("version-count").textContent = String(status.versions);
-  byId("quota-size").textContent = formatBytes(status.quota_bytes);
+  byId("trash-count").textContent = String(status.deleted_files);
+  byId("file-note").textContent = `${status.versions} 个历史版本`;
+  byId("storage-note").textContent = status.quota_bytes === null ? "未设置空间上限" : `总配额 ${formatBytes(status.quota_bytes)}`;
+  byId("backup-state").textContent = status.live_files > 0 ? "有数据" : "待备份";
+  byId("backup-note").textContent = status.live_files > 0 ? "已保存文件，可继续接入手机/电脑同步" : "上传文件或配置同步客户端后会显示数据";
+  renderRecentFiles(allFiles);
   const body = byId("file-list");
   body.replaceChildren();
   byId("current-path").textContent = `/${listing.prefix}`;
@@ -114,6 +127,32 @@ async function loadDashboard() {
   }
   byId("message").textContent = `当前层级：${listing.directories.length} 个目录，${files.length} 个文件`;
   await loadConsole();
+}
+
+function renderRecentFiles(files) {
+  const list = byId("recent-files");
+  list.replaceChildren();
+  const recent = [...files]
+    .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")))
+    .slice(0, 6);
+  if (!recent.length) {
+    const item = document.createElement("li");
+    item.textContent = "还没有文件。先上传一个文件，或配置电脑同步。";
+    list.append(item);
+    return;
+  }
+  for (const file of recent) {
+    const item = document.createElement("li");
+    const name = document.createElement("button");
+    name.type = "button";
+    name.className = "link-button";
+    name.textContent = file.virtual_path;
+    name.addEventListener("click", () => downloadFile(file.virtual_path));
+    const meta = document.createElement("small");
+    meta.textContent = `${formatBytes(file.size)} · ${file.created_at ? new Date(file.created_at).toLocaleString() : "未知时间"}`;
+    item.append(name, meta);
+    list.append(item);
+  }
 }
 
 function renderEvents(events) {
@@ -170,8 +209,10 @@ async function loadConsole() {
     byId("logical-size").textContent = formatBytes(storage.logical_bytes);
     byId("chunk-count").textContent = `${storage.chunks || 0} 个分块 · ${storage.deleted_files || 0} 个回收站文件`;
     renderEvents(consoleData.events || []);
+    byId("health-summary").textContent = status.process_running ? "你的个人节点正在运行，文件可以正常访问。" : "已连接到节点；如果这是前台开发模式，未检测到后台服务状态也属正常。";
     byId("console-message").textContent = `控制台已刷新：${new Date().toLocaleTimeString()}`;
   } catch (error) {
+    byId("health-summary").textContent = "文件功能可用，但高级诊断暂时不可用。";
     byId("console-message").textContent = `控制台暂不可用：${error.message}`;
   }
 }
@@ -292,6 +333,13 @@ byId("refresh").addEventListener("click", async () => {
   } catch (error) {
     byId("message").textContent = error.message;
   }
+});
+byId("quick-upload").addEventListener("click", () => scrollToSection("upload-title"));
+byId("quick-files").addEventListener("click", () => scrollToSection("files-title"));
+byId("quick-trash").addEventListener("click", showTrash);
+byId("quick-diagnostics").addEventListener("click", async () => {
+  byId("console-diagnostics").click();
+  document.querySelector(".advanced").open = true;
 });
 byId("console-refresh").addEventListener("click", loadConsole);
 byId("console-preflight").addEventListener("click", async () => {

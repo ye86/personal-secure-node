@@ -11,18 +11,35 @@ p { color:#9db7ae; }
 .status { border:1px solid #34554b; border-radius:999px; padding:9px 14px; font-size:.85rem; }
 .connected { color:#72f0bd; border-color:#3c8a6e; background:#102a22; }
 .disconnected { color:#d6b59d; }
-.login,.files { margin-top:38px; padding:28px; border:1px solid #203b34; border-radius:20px; background:rgba(10,27,23,.8); box-shadow:0 24px 80px rgba(0,0,0,.22); }
+.login,.files,.home { margin-top:38px; padding:28px; border:1px solid #203b34; border-radius:20px; background:rgba(10,27,23,.8); box-shadow:0 24px 80px rgba(0,0,0,.22); }
 form { margin-top:20px; }
 label { display:block; margin-bottom:8px; color:#bcd0c9; font-size:.85rem; }
 input { width:100%; border:1px solid #35564d; background:#07110f; color:#fff; border-radius:10px; padding:13px 14px; outline:none; }
 input:focus { border-color:#62e6b2; box-shadow:0 0 0 3px rgba(98,230,178,.14); }
 button { border:0; border-radius:10px; padding:13px 18px; background:#62e6b2; color:#062017; font-weight:750; cursor:pointer; white-space:nowrap; }
 button:hover { filter:brightness(1.08); }
+button:disabled { cursor:not-allowed; opacity:.48; filter:none; }
 .secondary { background:#17352c; color:#bde8d8; }
-.cards { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:38px; }
+.cards { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:24px; }
 .cards article { padding:22px; border:1px solid #203b34; border-radius:16px; background:#0a1b17; }
 .cards span { display:block; color:#799c91; font-size:.8rem; }
 .cards strong { display:block; margin-top:9px; font-size:1.6rem; }
+.cards small { display:block; color:#7f9e94; margin-top:8px; }
+.home { border-color:#2f6f5d; background:linear-gradient(135deg,rgba(18,57,47,.9),rgba(10,27,23,.82)); }
+.home-grid { display:grid; grid-template-columns:1fr 1.2fr; gap:18px; margin-top:18px; }
+.home-grid article { border:1px solid #25483f; border-radius:16px; background:rgba(7,17,15,.72); padding:20px; min-width:0; }
+.home-grid h3 { margin:0 0 14px; }
+.quick-actions { display:flex; flex-wrap:wrap; gap:10px; }
+.hint { font-size:.85rem; margin-bottom:0; }
+.recent-list { list-style:none; margin:0; padding:0; }
+.recent-list li { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:10px 0; border-bottom:1px solid #1d342d; }
+.recent-list li:last-child { border-bottom:0; }
+.recent-list small { color:#7f9e94; white-space:nowrap; }
+.advanced summary { display:flex; align-items:center; justify-content:space-between; gap:20px; cursor:pointer; list-style:none; }
+.advanced summary::-webkit-details-marker { display:none; }
+.advanced summary strong { display:block; margin-top:3px; font-size:1.15rem; }
+.advanced summary small { color:#7f9e94; }
+.advanced-title { margin-top:24px; }
 .console-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:18px 0 24px; }
 .console-grid article { padding:18px; border:1px solid #27483f; border-radius:16px; background:#081612; min-width:0; }
 .console-grid span { display:block; color:#799c91; font-size:.78rem; }
@@ -49,5 +66,5 @@ dialog::backdrop { background:rgba(0,0,0,.72); backdrop-filter:blur(4px); }
 .danger-text { color:#f19a7e; }
 code { color:#9ff2cf; }
 .form-message { min-height:1.25rem; margin:10px 0 0; color:#efb49e; font-size:.85rem; }
-@media (max-width:900px) { .console-grid { grid-template-columns:repeat(2,1fr); } }
-@media (max-width:760px) { .cards { grid-template-columns:repeat(2,1fr); } header,.token-row,.section-title { align-items:stretch; flex-direction:column; } .status { align-self:flex-start; } .upload-grid,.console-grid { grid-template-columns:1fr; } }
+@media (max-width:900px) { .console-grid,.home-grid { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:760px) { .cards { grid-template-columns:repeat(2,1fr); } header,.token-row,.section-title,.advanced summary { align-items:stretch; flex-direction:column; } .status { align-self:flex-start; } .upload-grid,.console-grid,.home-grid { grid-template-columns:1fr; } .recent-list li { flex-direction:column; gap:4px; } .recent-list small { white-space:normal; } }
