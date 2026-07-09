@@ -19,6 +19,7 @@ test-tmp/
 .tmp/
 tmp-test-permission/
 sqlite-probe-*/
+dist/
 
 # PSN Drive local vault data
 .psn/

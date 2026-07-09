@@ -10,6 +10,7 @@ from .device_client import authorize_admin_action, claim_device, login_device
 from .device_keys import create_device_key
 from .errors import DriveError
 from .http_api import serve
+from .release import generate_release_package
 from .server_config import (
     default_config_path,
     generate_windows_service_assets,
@@ -269,6 +270,10 @@ def build_parser() -> argparse.ArgumentParser:
     service_scripts.add_argument("--config", help="server config file; defaults to .psn/server.json")
     service_scripts.add_argument("--output", help="output directory; defaults to .psn/service/windows")
     service_scripts.add_argument("--python", dest="python_executable", help="python.exe used by generated scripts")
+
+    release_package = subparsers.add_parser("release-package", help="build a Windows/Linux release zip package")
+    release_package.add_argument("--project-root", default=".", help="project root containing pyproject.toml")
+    release_package.add_argument("--output", default="dist", help="output directory")
     return parser
 
 
@@ -329,6 +334,9 @@ def main(argv: list[str] | None = None) -> int:
                     args.task_name,
                 )
             )
+            return 0
+        if args.command == "release-package":
+            print_json(generate_release_package(args.project_root, args.output))
             return 0
 
         if args.command in ("sync-run", "sync-status", "sync-watch"):

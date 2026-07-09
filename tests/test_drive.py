@@ -31,6 +31,7 @@ from psn_drive.errors import (
     SyncAlreadyRunning,
 )
 from psn_drive.http_api import DriveHTTPServer, RateLimiter, configure_tls
+from psn_drive.release import generate_release_package
 from psn_drive.device_client import pinned_request
 from psn_drive.errors import CertificatePinError
 from psn_drive.tls import certificate_fingerprint, create_tls_identity
@@ -814,6 +815,29 @@ class VaultTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    def test_release_package_contains_windows_and_linux_installers(self):
+        package = generate_release_package(Path.cwd(), self.root / "dist", "9.9.9-test")
+        package_dir = Path(package["directory"])
+        archive = Path(package["archive"])
+        self.assertTrue((package_dir / "install-windows.ps1").is_file())
+        self.assertTrue((package_dir / "install-linux.sh").is_file())
+        self.assertTrue((package_dir / "source" / "pyproject.toml").is_file())
+        self.assertTrue((package_dir / "RELEASE_README.md").is_file())
+        self.assertTrue(archive.is_file())
+        windows_script = (package_dir / "install-windows.ps1").read_text(encoding="utf-8")
+        linux_script = (package_dir / "install-linux.sh").read_text(encoding="utf-8")
+        self.assertIn("server-config-init", windows_script)
+        self.assertIn("windows-service-scripts", windows_script)
+        self.assertIn("systemctl --user enable", linux_script)
+        with zipfile.ZipFile(archive) as bundle:
+            names = set(bundle.namelist())
+            self.assertIn("psn-drive-9.9.9-test/install-windows.ps1", names)
+            self.assertIn("psn-drive-9.9.9-test/install-linux.sh", names)
+            self.assertIn("psn-drive-9.9.9-test/source/psn_drive/cli.py", names)
+            self.assertFalse(any("identity.key" in name for name in names))
+            self.assertFalse(any("public.key" in name for name in names))
+            self.assertFalse(any("/.git/" in name for name in names))
+
     def test_service_runtime_lock_logging_status_and_diagnostics(self):
         config_info = init_server_config(self.vault, service_name="PSNDriveDiag")
         config = load_server_config(config_info["config_file"])
@@ -829,7 +853,7 @@ class VaultTests(unittest.TestCase):
                     pass
             locked = service_status(self.vault, config)
             self.assertTrue(locked["lock_exists"])
-            self.assertEqual(locked["lock"]["version"], "0.20.0")
+            self.assertEqual(locked["lock"]["version"], "0.21.0")
             self.assertTrue(locked["process_running"])
 
         with service_logging(self.vault):
