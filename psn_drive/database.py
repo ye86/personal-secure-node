@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -145,6 +145,20 @@ CREATE TABLE IF NOT EXISTS directories (
     virtual_path TEXT PRIMARY KEY,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS share_links (
+    id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    version_id TEXT NOT NULL REFERENCES versions(id) ON DELETE CASCADE,
+    virtual_path TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    max_downloads INTEGER CHECK(max_downloads IS NULL OR max_downloads > 0),
+    download_count INTEGER NOT NULL DEFAULT 0 CHECK(download_count >= 0),
+    last_downloaded_at TEXT,
+    revoked_at TEXT
+);
 """
 
 
@@ -167,7 +181,7 @@ def initialize(path: Path) -> None:
         row = conn.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
         if row is None:
             conn.execute("INSERT INTO schema_info(version) VALUES (?)", (SCHEMA_VERSION,))
-        elif row["version"] in (1, 2, 3, 4, 5):
+        elif row["version"] in (1, 2, 3, 4, 5, 6):
             conn.execute("UPDATE schema_info SET version = ?", (SCHEMA_VERSION,))
         elif row["version"] != SCHEMA_VERSION:
             raise RuntimeError(f"unsupported schema version: {row['version']}")

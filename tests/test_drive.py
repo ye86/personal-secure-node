@@ -293,6 +293,7 @@ class VaultTests(unittest.TestCase):
         import sqlite3
 
         connection = sqlite3.connect(self.vault.database_path)
+        connection.execute("DROP TABLE share_links")
         connection.execute("DROP TABLE directories")
         connection.execute("DROP TABLE action_tokens")
         connection.execute("DROP TABLE admin_challenges")
@@ -312,7 +313,28 @@ class VaultTests(unittest.TestCase):
         connection = sqlite3.connect(self.vault.database_path)
         version = connection.execute("SELECT version FROM schema_info").fetchone()[0]
         connection.close()
-        self.assertEqual(version, 6)
+        self.assertEqual(version, 7)
+
+    def test_share_links_expire_limit_and_revoke(self):
+        source = self.make_file("share.txt", b"hello share")
+        self.vault.import_file(source, "public/share.txt")
+        share = self.vault.create_share_link("public/share.txt", ttl_seconds=120, max_downloads=1)
+        self.assertIn("token", share)
+        active = self.vault.list_share_links()
+        self.assertEqual(active[0]["state"], "active")
+        info, manifest = self.vault.shared_download_manifest(share["token"])
+        self.assertEqual(info["virtual_path"], "public/share.txt")
+        self.assertEqual(b"".join(self.vault.iter_manifest(manifest)), b"hello share")
+        exhausted = self.vault.list_share_links(include_inactive=True)[0]
+        self.assertEqual(exhausted["state"], "exhausted")
+        with self.assertRaises(FileNotFoundInVault):
+            self.vault.shared_download_manifest(share["token"])
+
+        second = self.vault.create_share_link("public/share.txt", ttl_seconds=120)
+        revoked = self.vault.revoke_share_link(second["id"])
+        self.assertTrue(revoked["revoked"])
+        with self.assertRaises(FileNotFoundInVault):
+            self.vault.shared_download_manifest(second["token"])
 
     def test_resumable_upload_out_of_order_and_idempotent_commit(self):
         content = b"abcdefghij"
@@ -476,6 +498,7 @@ class VaultTests(unittest.TestCase):
                 self.assertIn("PSN Drive", page)
                 self.assertIn("个人数据中心", page)
                 self.assertIn("高级诊断", page)
+                self.assertIn("分享链接", page)
                 self.assertIn("插件中心", page)
                 self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
                 self.assertEqual(response.headers["X-Frame-Options"], "DENY")
@@ -527,6 +550,23 @@ class VaultTests(unittest.TestCase):
                 self.assertEqual(response.read(), b"data")
             files = request_json("/v1/files", token=token)
             self.assertEqual(files[0]["virtual_path"], "api/file.bin")
+
+            share = request_json(
+                "/v1/shares", "POST",
+                {"virtual_path":"api/file.bin", "ttl_seconds":120, "max_downloads":2}, token,
+            )
+            public_download = Request(base_url + share["url_path"])
+            with urlopen(public_download, timeout=5, context=insecure_test_context) as response:
+                self.assertEqual(response.read(), b"data")
+                self.assertIn("attachment", response.headers["Content-Disposition"])
+            shares = request_json("/v1/shares?include_inactive=true", token=token)
+            self.assertEqual(shares[0]["download_count"], 1)
+            revoked_share = request_json("/v1/shares/revoke", "POST", {"id":share["id"]}, token)
+            self.assertTrue(revoked_share["revoked"])
+            with self.assertRaises(HTTPError) as revoked_download:
+                with urlopen(public_download, timeout=5, context=insecure_test_context):
+                    pass
+            self.assertEqual(revoked_download.exception.code, 404)
 
             changed = self.make_file("api-changed.bin", b"next")
             self.vault.import_file(changed, "api/file.bin")
@@ -729,7 +769,7 @@ class VaultTests(unittest.TestCase):
                     pass
             locked = service_status(self.vault, config)
             self.assertTrue(locked["lock_exists"])
-            self.assertEqual(locked["lock"]["version"], "0.18.0")
+            self.assertEqual(locked["lock"]["version"], "0.19.0")
             self.assertTrue(locked["process_running"])
 
         with service_logging(self.vault):

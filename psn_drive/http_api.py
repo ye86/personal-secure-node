@@ -5,7 +5,7 @@ import time
 from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .auth import DeviceAuth
 from .errors import (
@@ -209,6 +209,12 @@ class DriveRequestHandler(BaseHTTPRequestHandler):
                 self._authorize("drive:read")
                 self._json(200, self.server.vault.list_deleted_files())
                 return
+            if path == "/v1/shares":
+                self._authorize("drive:read")
+                query = parse_qs(parsed.query)
+                include_inactive = query.get("include_inactive", ["false"])[0].lower() in ("1", "true", "yes")
+                self._json(200, self.server.vault.list_share_links(include_inactive))
+                return
             if path == "/v1/versions":
                 self._authorize("drive:read")
                 query = parse_qs(parsed.query)
@@ -228,6 +234,26 @@ class DriveRequestHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
                 self.send_header("Content-Length", str(info["size"]))
+                self.send_header("X-PSN-Version", info["version_id"])
+                self.send_header("X-Content-SHA256", info["content_hash"])
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                for chunk in self.server.vault.iter_manifest(manifest):
+                    self.wfile.write(chunk)
+                self.close_connection = True
+                return
+            if path.startswith("/s/"):
+                self._rate_limit("share-download", 120, 60)
+                token = unquote(path.removeprefix("/s/")).strip("/")
+                if not token or "/" in token:
+                    raise ValueError("invalid share link")
+                info, manifest = self.server.vault.shared_download_manifest(token)
+                filename = Path(info["virtual_path"]).name or "download"
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(info["size"]))
+                self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(filename)}")
                 self.send_header("X-PSN-Version", info["version_id"])
                 self.send_header("X-Content-SHA256", info["content_hash"])
                 self.send_header("Cache-Control", "no-store")
@@ -284,6 +310,23 @@ class DriveRequestHandler(BaseHTTPRequestHandler):
                 self._authorize("drive:write")
                 self._rate_limit("console-diagnostics", 5, 60)
                 self._json(201, create_diagnostic_bundle(self.server.vault, self._server_config_or_none()))
+                return
+            if path == "/v1/shares":
+                self._authorize("drive:write")
+                body = self._read_json()
+                self._json(
+                    201,
+                    self.server.vault.create_share_link(
+                        body["virtual_path"],
+                        int(body.get("ttl_seconds", 7 * 24 * 60 * 60)),
+                        body.get("max_downloads"),
+                    ),
+                )
+                return
+            if path == "/v1/shares/revoke":
+                self._authorize("drive:write")
+                body = self._read_json()
+                self._json(200, self.server.vault.revoke_share_link(body["id"]))
                 return
             if path == "/v1/admin/challenges":
                 principal = self._authorize("drive:write")

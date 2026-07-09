@@ -82,6 +82,7 @@ async function loadDashboard() {
   byId("backup-state").textContent = status.live_files > 0 ? "有数据" : "待备份";
   byId("backup-note").textContent = status.live_files > 0 ? "已保存文件，可继续接入手机/电脑同步" : "上传文件或配置同步客户端后会显示数据";
   renderRecentFiles(allFiles);
+  await loadShares();
   const body = byId("file-list");
   body.replaceChildren();
   byId("current-path").textContent = `/${listing.prefix}`;
@@ -121,12 +122,68 @@ async function loadDashboard() {
     const move = document.createElement("button");
     move.type = "button"; move.className = "link-button"; move.textContent = "移动";
     move.addEventListener("click", () => showMove(file.virtual_path));
-    actions.append(download, history, move, remove);
+    const share = document.createElement("button");
+    share.type = "button"; share.className = "link-button"; share.textContent = "分享";
+    share.addEventListener("click", () => showShare(file.virtual_path));
+    actions.append(download, history, share, move, remove);
     row.append(path, size, date, actions);
     body.append(row);
   }
   byId("message").textContent = `当前层级：${listing.directories.length} 个目录，${files.length} 个文件`;
   await loadConsole();
+}
+
+async function loadShares() {
+  try {
+    const shares = await jsonApi("/v1/shares?include_inactive=true");
+    const body = byId("share-list");
+    body.replaceChildren();
+    if (!shares.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 5;
+      cell.textContent = "还没有分享链接。可以在文件列表里点击“分享”。";
+      row.append(cell);
+      body.append(row);
+      return;
+    }
+    for (const share of shares) {
+      const row = document.createElement("tr");
+      const path = document.createElement("td");
+      path.textContent = share.virtual_path;
+      const state = document.createElement("td");
+      state.textContent = shareStateText(share.state);
+      const downloads = document.createElement("td");
+      downloads.textContent = share.max_downloads ? `${share.download_count}/${share.max_downloads}` : `${share.download_count}/不限`;
+      const expires = document.createElement("td");
+      expires.textContent = share.expires_at ? new Date(share.expires_at).toLocaleString() : "—";
+      const actions = document.createElement("td");
+      if (share.state === "active") {
+        const revoke = document.createElement("button");
+        revoke.type = "button";
+        revoke.className = "link-button danger-text";
+        revoke.textContent = "撤销";
+        revoke.addEventListener("click", async () => {
+          await jsonApi("/v1/shares/revoke", "POST", {id:share.id});
+          byId("share-message").textContent = `已撤销 ${share.virtual_path} 的分享链接`;
+          await loadShares();
+        });
+        actions.append(revoke);
+      }
+      row.append(path, state, downloads, expires, actions);
+      body.append(row);
+    }
+  } catch (error) {
+    byId("share-message").textContent = error.message;
+  }
+}
+
+function shareStateText(state) {
+  if (state === "active") return "可下载";
+  if (state === "revoked") return "已撤销";
+  if (state === "expired") return "已过期";
+  if (state === "exhausted") return "次数已用完";
+  return state || "未知";
 }
 
 function renderRecentFiles(files) {
@@ -272,6 +329,16 @@ function showMove(path) {
   byId("move-message").textContent = ""; byId("move-dialog").showModal();
 }
 
+function showShare(path) {
+  selectedPath = path;
+  byId("share-path").textContent = path;
+  byId("share-days").value = "7";
+  byId("share-max").value = "";
+  byId("share-url").value = "";
+  byId("share-dialog-message").textContent = "";
+  byId("share-dialog").showModal();
+}
+
 async function showTrash() {
   const items = await jsonApi("/v1/trash");
   const body = byId("trash-list"); body.replaceChildren();
@@ -337,10 +404,12 @@ byId("refresh").addEventListener("click", async () => {
 byId("quick-upload").addEventListener("click", () => scrollToSection("upload-title"));
 byId("quick-files").addEventListener("click", () => scrollToSection("files-title"));
 byId("quick-trash").addEventListener("click", showTrash);
+byId("quick-shares").addEventListener("click", () => scrollToSection("shares-title"));
 byId("quick-diagnostics").addEventListener("click", async () => {
   byId("console-diagnostics").click();
   document.querySelector(".advanced").open = true;
 });
+byId("shares-refresh").addEventListener("click", loadShares);
 byId("console-refresh").addEventListener("click", loadConsole);
 byId("console-preflight").addEventListener("click", async () => {
   try {
@@ -406,10 +475,40 @@ byId("upload-form").addEventListener("submit", async (event) => {
 byId("history-close").addEventListener("click", () => byId("history-dialog").close());
 byId("delete-close").addEventListener("click", () => byId("delete-dialog").close());
 byId("move-close").addEventListener("click", () => byId("move-dialog").close());
+byId("share-close").addEventListener("click", () => byId("share-dialog").close());
 byId("trash-close").addEventListener("click", () => byId("trash-dialog").close());
 byId("move-confirm").addEventListener("click", async()=>{
   try { await jsonApi("/v1/files/move","POST",{source:selectedPath,destination:byId("move-destination").value.trim()}); byId("move-dialog").close(); await loadDashboard(); }
   catch(error){ byId("move-message").textContent=error.message; }
+});
+byId("share-create").addEventListener("click", async () => {
+  try {
+    const days = Math.max(1, Number(byId("share-days").value || "7"));
+    const maxValue = byId("share-max").value.trim();
+    const result = await jsonApi("/v1/shares", "POST", {
+      virtual_path:selectedPath,
+      ttl_seconds:Math.round(days * 24 * 60 * 60),
+      max_downloads:maxValue ? Number(maxValue) : null,
+    });
+    const url = `${location.origin}${result.url_path}`;
+    byId("share-url").value = url;
+    byId("share-dialog-message").textContent = `链接已创建，有效期至 ${new Date(result.expires_at).toLocaleString()}`;
+    await loadShares();
+  } catch (error) {
+    byId("share-dialog-message").textContent = error.message;
+  }
+});
+byId("share-copy").addEventListener("click", async () => {
+  const url = byId("share-url").value;
+  if (!url) return;
+  try {
+    await navigator.clipboard.writeText(url);
+    byId("share-dialog-message").textContent = "链接已复制";
+  } catch (_) {
+    byId("share-url").select();
+    document.execCommand("copy");
+    byId("share-dialog-message").textContent = "链接已复制";
+  }
 });
 byId("delete-confirm").addEventListener("click", async () => {
   const actionToken = byId("action-token").value.trim();

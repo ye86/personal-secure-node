@@ -1,6 +1,7 @@
 import hashlib
 import os
 import posixpath
+import secrets
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -24,6 +25,8 @@ from .errors import (
 from .storage import BlobStore
 
 DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024
+DEFAULT_SHARE_TTL_SECONDS = 7 * 24 * 60 * 60
+MAX_SHARE_TTL_SECONDS = 365 * 24 * 60 * 60
 
 
 def utc_now() -> str:
@@ -37,6 +40,10 @@ def normalize_virtual_path(value: str) -> str:
     if not value or normalized in ("", ".") or ".." in path.parts:
         raise InvalidVirtualPath(f"invalid vault path: {value!r}")
     return path.as_posix()
+
+
+def token_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -509,6 +516,174 @@ class Vault:
                 (row["version_id"],),
             ).fetchall()
             return dict(row), [dict(chunk) for chunk in chunks]
+        finally:
+            conn.close()
+
+    def create_share_link(
+        self,
+        virtual_path: str,
+        ttl_seconds: int = DEFAULT_SHARE_TTL_SECONDS,
+        max_downloads: int | None = None,
+    ) -> dict:
+        virtual_path = normalize_virtual_path(virtual_path)
+        ttl_seconds = int(ttl_seconds)
+        if ttl_seconds < 60 or ttl_seconds > MAX_SHARE_TTL_SECONDS:
+            raise ValueError("share link TTL must be between 60 seconds and 365 days")
+        if max_downloads is not None:
+            max_downloads = int(max_downloads)
+            if max_downloads <= 0:
+                raise ValueError("share link max_downloads must be positive")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        expires = (now_dt + timedelta(seconds=ttl_seconds)).isoformat()
+        raw_token = secrets.token_urlsafe(32)
+        share_id = uuid.uuid4().hex
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            file_row = conn.execute(
+                """
+                SELECT f.id AS file_id, f.virtual_path, v.id AS version_id, v.size, v.content_hash
+                FROM files f JOIN versions v ON v.id = f.current_version_id
+                WHERE f.virtual_path = ? AND f.deleted_at IS NULL
+                """,
+                (virtual_path,),
+            ).fetchone()
+            if file_row is None:
+                raise FileNotFoundInVault(virtual_path)
+            conn.execute(
+                """
+                INSERT INTO share_links(
+                    id, token_hash, file_id, version_id, virtual_path, created_at,
+                    expires_at, max_downloads, download_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                """,
+                (
+                    share_id,
+                    token_hash(raw_token),
+                    file_row["file_id"],
+                    file_row["version_id"],
+                    virtual_path,
+                    now,
+                    expires,
+                    max_downloads,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO events(event_type, file_id, version_id, occurred_at) VALUES ('share.created', ?, ?, ?)",
+                (file_row["file_id"], file_row["version_id"], now),
+            )
+            conn.commit()
+            return {
+                "id": share_id,
+                "token": raw_token,
+                "url_path": f"/s/{raw_token}",
+                "virtual_path": virtual_path,
+                "version_id": file_row["version_id"],
+                "size": file_row["size"],
+                "content_hash": file_row["content_hash"],
+                "created_at": now,
+                "expires_at": expires,
+                "max_downloads": max_downloads,
+                "download_count": 0,
+                "revoked_at": None,
+            }
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def list_share_links(self, include_inactive: bool = False) -> list[dict]:
+        now = utc_now()
+        where = "" if include_inactive else "WHERE s.revoked_at IS NULL AND s.expires_at > ? AND (s.max_downloads IS NULL OR s.download_count < s.max_downloads)"
+        params = () if include_inactive else (now,)
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT s.id, s.virtual_path, s.version_id, s.created_at, s.expires_at,
+                       s.max_downloads, s.download_count, s.last_downloaded_at, s.revoked_at,
+                       v.size, v.content_hash,
+                       CASE
+                         WHEN s.revoked_at IS NOT NULL THEN 'revoked'
+                         WHEN s.expires_at <= ? THEN 'expired'
+                         WHEN s.max_downloads IS NOT NULL AND s.download_count >= s.max_downloads THEN 'exhausted'
+                         ELSE 'active'
+                       END AS state
+                FROM share_links s JOIN versions v ON v.id = s.version_id
+                {where}
+                ORDER BY s.created_at DESC
+                """,
+                (now, *params),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def revoke_share_link(self, share_id: str) -> dict:
+        now = utc_now()
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM share_links WHERE id = ?", (share_id,)).fetchone()
+            if row is None:
+                raise FileNotFoundInVault(f"share link not found: {share_id}")
+            if row["revoked_at"] is None:
+                conn.execute("UPDATE share_links SET revoked_at = ? WHERE id = ?", (now, share_id))
+                conn.execute(
+                    "INSERT INTO events(event_type, file_id, version_id, occurred_at) VALUES ('share.revoked', ?, ?, ?)",
+                    (row["file_id"], row["version_id"], now),
+                )
+            conn.commit()
+            return {"id": share_id, "revoked": True, "revoked_at": now}
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def shared_download_manifest(self, raw_token: str) -> tuple[dict, list[dict]]:
+        now = utc_now()
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
+                SELECT s.*, v.size, v.content_hash
+                FROM share_links s JOIN versions v ON v.id = s.version_id
+                WHERE s.token_hash = ?
+                """,
+                (token_hash(raw_token),),
+            ).fetchone()
+            if row is None:
+                raise FileNotFoundInVault("share link not found")
+            if row["revoked_at"] is not None:
+                raise FileNotFoundInVault("share link was revoked")
+            if row["expires_at"] <= now:
+                raise FileNotFoundInVault("share link has expired")
+            if row["max_downloads"] is not None and row["download_count"] >= row["max_downloads"]:
+                raise FileNotFoundInVault("share link download limit reached")
+            conn.execute(
+                "UPDATE share_links SET download_count = download_count + 1, last_downloaded_at = ? WHERE id = ?",
+                (now, row["id"]),
+            )
+            chunks = conn.execute(
+                "SELECT ordinal, chunk_id, plain_size FROM version_chunks WHERE version_id = ? ORDER BY ordinal",
+                (row["version_id"],),
+            ).fetchall()
+            conn.commit()
+            info = {
+                "share_id": row["id"],
+                "virtual_path": row["virtual_path"],
+                "version_id": row["version_id"],
+                "size": row["size"],
+                "content_hash": row["content_hash"],
+            }
+            return info, [dict(chunk) for chunk in chunks]
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 

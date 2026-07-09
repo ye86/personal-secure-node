@@ -59,15 +59,33 @@
             <div class="quick-actions">
               <button id="quick-trash" type="button" class="secondary">打开回收站</button>
               <button id="quick-diagnostics" type="button" class="secondary">导出问题报告</button>
-              <button type="button" class="secondary" disabled>分享链接</button>
+              <button id="quick-shares" type="button" class="secondary">分享链接</button>
               <button type="button" class="secondary" disabled>插件中心</button>
             </div>
-            <p class="hint">分享链接和插件中心先占位，后续版本逐步接入。</p>
+            <p class="hint">插件中心先占位，后续版本逐步接入第三方模块生态。</p>
           </article>
           <article>
             <h3>最近文件</h3>
             <ul id="recent-files" class="recent-list"></ul>
           </article>
+        </div>
+      </section>
+
+      <section class="files" aria-labelledby="shares-title">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">PUBLIC LINKS</p>
+            <h2 id="shares-title">分享链接</h2>
+            <p>给别人下载文件，不需要对方注册账号。你可以随时撤销。</p>
+          </div>
+          <button id="shares-refresh" type="button" class="secondary">刷新分享</button>
+        </div>
+        <p id="share-message" role="status"></p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>文件</th><th>状态</th><th>下载</th><th>过期时间</th><th></th></tr></thead>
+            <tbody id="share-list"></tbody>
+          </table>
         </div>
       </section>
 
@@ -171,6 +189,21 @@
       <div class="dialog-title"><h2>移动或重命名</h2><button id="move-close" class="secondary" type="button">关闭</button></div>
       <p id="move-source"></p><label for="move-destination">新Vault路径</label><input id="move-destination" type="text">
       <button id="move-confirm" type="button">确认移动</button><p id="move-message" class="form-message" role="status"></p>
+    </dialog>
+
+    <dialog id="share-dialog">
+      <div class="dialog-title"><h2>创建分享链接</h2><button id="share-close" class="secondary" type="button">关闭</button></div>
+      <p>分享链接是只读下载链接。对方不需要账号，但拿到链接的人都可以下载。</p>
+      <code id="share-path"></code>
+      <div class="upload-grid">
+        <label for="share-days">有效天数<input id="share-days" type="number" min="1" max="365" value="7"></label>
+        <label for="share-max">最多下载次数<input id="share-max" type="number" min="1" placeholder="不限"></label>
+        <button id="share-create" type="button">创建链接</button>
+      </div>
+      <label for="share-url">分享地址</label>
+      <input id="share-url" type="text" readonly>
+      <button id="share-copy" class="secondary" type="button">复制链接</button>
+      <p id="share-dialog-message" class="form-message" role="status"></p>
     </dialog>
 
     <dialog id="trash-dialog">
